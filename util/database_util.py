@@ -6,11 +6,11 @@
 @Time    : 2024/8/1 上午10:24
 @explain : 数据库工具类
 """
+import mysql.connector
 import logging
 
-logging.basicConfig(level=logging.INFO)
-
-import mysql.connector
+logging.basicConfig(level=logging.DEBUG)
+logging.getLogger().setLevel(logging.DEBUG)
 
 
 class DatabaseUtils:
@@ -36,7 +36,7 @@ class DatabaseUtils:
                 auth_plugin='mysql_native_password',
                 use_pure=False
             )
-            logging.info("数据库连接成功")
+            logging.debug("数据库连接成功")
             return conn
         except mysql.connector.Error as err:
             print(f"数据库连接失败: {err}")
@@ -52,6 +52,6 @@ class DatabaseUtils:
         if conn:
             try:
                 conn.close()
-                logging.info("数据库连接已关闭")
+                logging.debug("数据库连接已关闭")
             except mysql.connector.Error as err:
                 logging.error(f"关闭数据库连接时出错: {err}")

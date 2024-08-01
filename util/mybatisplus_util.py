@@ -10,23 +10,10 @@ import pymysql
 import logging
 
 from util.database_util import DatabaseUtils
-
-logging.basicConfig(level=logging.INFO)
 from typing import List
 
-# !/usr/bin/env python
-# -*- coding: utf-8 -*-
-"""
-@File    : mybatisplus_util.py
-@Author  : ChenLiRui
-@Time    : 2024/8/1 上午8:25
-@explain : MyBatisPlus工具类
-"""
-import pymysql
-import logging
-
-logging.basicConfig(level=logging.INFO)
-from typing import List
+logging.basicConfig(level=logging.DEBUG)
+logging.getLogger().setLevel(logging.DEBUG)
 
 
 class MyBatisPlusUtils:
@@ -57,8 +44,8 @@ class MyBatisPlusUtils:
             if result:
                 result_dict = {column[0]: value for column, value in zip(cursor.description, result)}
             cursor.close()
-            logging.info(f"成功从表 {self.table_name} 根据 ID {id} 查找数据")
-            logging.info(f"传入参数: {id}")
+            logging.debug(f"成功从表 {self.table_name} 根据 ID {id} 查找数据")
+            logging.debug(f"传入参数: {id}")
             return result_dict
         except Exception as e:
             logging.error(f"从表 {self.table_name} 根据 ID {id} 查找数据时出错: {e}")
@@ -80,34 +67,57 @@ class MyBatisPlusUtils:
             for result in results:
                 result_dict = {column[0]: value for column, value in zip(cursor.description, result)}
                 all_results.append(result_dict)
-            logging.info(f"成功从表 {self.table_name} 获取所有数据")
+            logging.debug(f"成功从表 {self.table_name} 获取所有数据")
             return all_results
         except Exception as e:
             logging.error(f"从表 {self.table_name} 获取所有数据时出错: {e}")
 
-    def find_by_conditions(self, criteria: dict, excluded_values: dict):
+    def find_by_equals(self, equal: dict = None, unequal: dict = None):
         """
         通过自定义条件从表 {self.table_name} 查找数据，并排除某些属性具有特定值的记录
         Args:
-            criteria (dict): 包含查询条件的字典，如 {'name': 'John', 'age': 25}
-            excluded_values (dict): 包含需要排除的属性值对，如 {'status': 'inactive'}
+            equal (dict, optional): 包含查询条件的字典，如 {'name': 'John', 'age': 25}
+            unequal (dict, optional): 包含需要排除的属性值对，如 {'status': 'inactive'}
         Returns:
             List[dict]: 符合条件且不包含排除值的结果
         """
         try:
-            condition_str = " AND ".join([f"{key} = '{value}'" for key, value in criteria.items()])
-            excluded_condition_str = " AND ".join([f"{key}!= '{value}'" for key, value in excluded_values.items()])
+            equal_str = []
+            if equal:
+                for key, value in equal.items():
+                    if value is None:
+                        equal_str.append(f"{key} IS NULL")
+                    else:
+                        equal_str.append(f"{key} = '{value}'")
+                equal_str = " AND ".join(equal_str)
+
+            unequal_str = []
+            if unequal:
+                for key, value in unequal.items():
+                    if value is None:
+                        unequal_str.append(f"{key} IS NOT NULL")
+                    else:
+                        unequal_str.append(f"{key}!= '{value}'")
+                unequal_str = " AND ".join(unequal_str)
+            final_data = ""
+            if equal_str and unequal_str:
+                final_data = f"{equal_str} AND {unequal_str}"
+            elif equal_str:
+                final_data = equal_str
+            elif unequal_str:
+                final_data = unequal_str
+
             cursor = self.connection.cursor()
-            query = f"SELECT * FROM {self.table_name} WHERE {condition_str} AND {excluded_condition_str}"
+            query = f"SELECT * FROM {self.table_name} WHERE {final_data}"
             cursor.execute(query)
             results = cursor.fetchall()
             cursor.close()
-            logging.info(f"成功从表 {self.table_name} 根据条件 {criteria} 且排除 {excluded_values} 查找数据")
-            logging.info(f"传入参数: {criteria}, {excluded_values}")
+            logging.debug(f"成功从表 {self.table_name} 根据条件查找数据")
+            logging.debug(f"传入参数: equals: {equal}, unequals: {unequal}")
             return results
         except Exception as e:
-            logging.error(f"从表 {self.table_name} 根据条件 {criteria} 且排除 {excluded_values} 查找数据时出错: {e}")
-            logging.error(f"传入参数: {criteria}, {excluded_values}")
+            logging.error(f"从表 {self.table_name} 根据条件查找数据时出错: {e}")
+            logging.error(f"传入参数: equals: {equal}, unequals: {unequal}")
 
     def insert(self, entity: dict):
         """
@@ -123,8 +133,8 @@ class MyBatisPlusUtils:
             cursor.execute(query, tuple(entity.values()))
             self.connection.commit()
             cursor.close()
-            logging.info(f"成功向表 {self.table_name} 插入数据")
-            logging.info(f"传入参数: {entity}")
+            logging.debug(f"成功向表 {self.table_name} 插入数据")
+            logging.debug(f"传入参数: {entity}")
         except Exception as e:
             logging.error(f"向表 {self.table_name} 插入数据时出错: {e}")
             logging.error(f"传入参数: {entity}")
@@ -151,47 +161,78 @@ class MyBatisPlusUtils:
             cursor.execute(query, tuple(values))
             self.connection.commit()
             cursor.close()
-            logging.info(f"成功从表 {self.table_name} 根据 ID 更新数据")
-            logging.info(f"传入参数: {entity}")
+            logging.debug(f"成功从表 {self.table_name} 根据 ID 更新数据")
+            logging.debug(f"传入参数: {entity}")
         except Exception as e:
             logging.error(f"从表 {self.table_name} 根据 ID 更新数据时出错: {e}")
             logging.error(f"传入参数: {entity}")
 
-    def update_by_conditions(self, update_entity: dict, conditions: dict):
+    def update_by_equals(self, update_entity: dict = None, equals: dict = None, unequals: dict = None):
         """
-        根据指定的条件从表 {self.table_name} 和更新内容更新数据
+        根据指定的条件从表 {self.table_name} 和更新内容更新数据，并处理排除值
         Args:
             update_entity (dict): 包含要更新的字段和值的字典
-            conditions (dict): 用于筛选的条件字典
+            equals (dict): 用于筛选的条件字典
+            unequals (dict, optional): 包含需要排除的属性值对，如 {'status': 'inactive'}
         """
         try:
             set_statements = []
             set_values = []
-            condition_statements = []
-            condition_values = []
+            equal_statements = []
+            equal_values = []
+            unequal_statements = []
+            unequal_values = []
 
-            for key, value in update_entity.items():
-                set_statements.append(f"{key} = %s")
-                set_values.append(value)
+            if update_entity:
+                for key, value in update_entity.items():
+                    if value is None:
+                        set_statements.append(f"{key} = NULL")
+                    else:
+                        set_statements.append(f"{key} = %s")
+                        set_values.append(value)
 
-            for key, value in conditions.items():
-                condition_statements.append(f"{key} = %s")
-                condition_values.append(value)
+            if equals:
+                for key, value in equals.items():
+                    if value is None:
+                        equal_statements.append(f"{key} IS NULL")
+                    else:
+                        equal_statements.append(f"{key} = %s")
+                        equal_values.append(value)
+
+            if unequals:
+                for key, value in unequals.items():
+                    if value is None:
+                        unequal_statements.append(f"{key} IS NOT NULL")
+                    else:
+                        unequal_statements.append(f"{key}!= %s")
+                        unequal_values.append(value)
 
             set_str = ', '.join(set_statements)
-            condition_str = " AND ".join(condition_statements)
+            equal_str = " AND ".join(equal_statements)
+            unequal_str = " AND ".join(
+                unequal_statements) if unequal_statements else ""
+
+            final_data = ""
+            if equal_str and unequal_str:
+                final_data = f"{equal_str} AND {unequal_str}"
+            elif equal_str:
+                final_data = equal_str
+            elif unequal_str:
+                final_data = unequal_str
 
             cursor = self.connection.cursor()
-            query = f"UPDATE {self.table_name} SET {set_str} WHERE {condition_str}"
-            values = set_values + condition_values
+            query = f"UPDATE {self.table_name} SET {set_str} WHERE {final_data}"
+            values = set_values + equal_values + unequal_values
             cursor.execute(query, tuple(values))
             self.connection.commit()
             cursor.close()
-            logging.info(f"成功从表 {self.table_name} 根据条件和更新内容更新数据")
-            logging.info(f"传入参数: update_entity: {update_entity}, conditions: {conditions}")
+            logging.debug(f"成功从表 {self.table_name} 根据条件和更新内容更新数据")
+            logging.debug(
+                f"传入参数: update_entity: {update_entity}, equals: {equals}, unequal_values: {unequal_values}")
         except Exception as e:
             logging.error(f"从表 {self.table_name} 根据条件和更新内容更新数据时出错: {e}")
-            logging.error(f"传入参数: update_entity: {update_entity}, conditions: {conditions}")
+            logging.error(
+                f"传入参数: update_entity: {update_entity}, equals: {equals}, unequal_values: {unequal_values}")
 
     def insert_or_update(self, entity: dict):
         """
@@ -210,11 +251,11 @@ class MyBatisPlusUtils:
             cursor.execute(insert_query, tuple(entity.values()))
             self.connection.commit()
             insert_successful = True
-            logging.info(f"成功向表 {self.table_name} 插入数据")
-            logging.info(f"传入参数: {entity}")
+            logging.debug(f"成功向表 {self.table_name} 插入数据")
+            logging.debug(f"传入参数: {entity}")
         except pymysql.err.IntegrityError as e:
             if e.args[0] == 1062:
-                logging.info(f"插入数据时因主键冲突，尝试更新")
+                logging.debug(f"插入数据时因主键冲突，尝试更新")
                 set_statements = []
                 values = []
                 primary_key = 'id' if 'id' in entity else list(entity.keys())[0]
@@ -228,8 +269,8 @@ class MyBatisPlusUtils:
                 cursor.execute(update_query, tuple(values))
                 self.connection.commit()
                 update_successful = True
-                logging.info(f"成功从表 {self.table_name} 因主键冲突进行更新数据")
-                logging.info(f"传入参数: {entity}")
+                logging.debug(f"成功从表 {self.table_name} 因主键冲突进行更新数据")
+                logging.debug(f"传入参数: {entity}")
             else:
                 logging.error(f"向表 {self.table_name} 插入数据时出现其他完整性错误: {e}")
                 logging.error(f"传入参数: {entity}")
@@ -254,8 +295,8 @@ class MyBatisPlusUtils:
             cursor.execute(query, (id,))
             self.connection.commit()
             cursor.close()
-            logging.info(f"成功从表 {self.table_name} 根据 ID {id} 删除数据")
-            logging.info(f"传入参数: {id}")
+            logging.debug(f"成功从表 {self.table_name} 根据 ID {id} 删除数据")
+            logging.debug(f"传入参数: {id}")
         except Exception as e:
             logging.error(f"从表 {self.table_name} 根据 ID {id} 删除数据时出错: {e}")
             logging.error(f"传入参数: {id}")
@@ -272,65 +313,101 @@ class MyBatisPlusUtils:
             cursor.execute(query, (id,))
             self.connection.commit()
             cursor.close()
-            logging.info(f"成功从表 {self.table_name} 假删除根据 ID {id} 的数据")
-            logging.info(f"传入参数: {id}")
+            logging.debug(f"成功从表 {self.table_name} 假删除根据 ID {id} 的数据")
+            logging.debug(f"传入参数: {id}")
         except Exception as e:
             logging.error(f"从表 {self.table_name} 假删除根据 ID {id} 的数据时出错: {e}")
             logging.error(f"传入参数: {id}")
 
-    def delete_by_conditions(self, conditions: dict):
+    def delete_by_equals(self, equals: dict = None, unequals: dict = None):
         """
-        根据指定条件从表 {self.table_name} 删除数据
+        根据指定条件从表 {self.table_name} 删除数据，并排除某些属性具有特定值的记录
         Args:
-            conditions (dict): 用于筛选的条件字典
+            equals (dict, optional): 包含删除条件的字典，如 {'name': 'John', 'age': 25}
+            unequals (dict, optional): 包含需要排除的属性值对，如 {'status': 'inactive'}
         """
         try:
-            conditions_statements = []
-            condition_values = []
+            equal_str = []
+            if equals:
+                for key, value in equals.items():
+                    if value is None:
+                        equal_str.append(f"{key} IS NULL")
+                    else:
+                        equal_str.append(f"{key} = '{value}'")
+                equal_str = " AND ".join(equal_str)
 
-            for key, value in conditions.items():
-                conditions_statements.append(f"{key} = %s")
-                condition_values.append(value)
-
-            condition_str = " AND ".join(conditions_statements)
+            unequal_str = []
+            if unequals:
+                for key, value in unequals.items():
+                    if value is None:
+                        unequal_str.append(f"{key} IS NOT NULL")
+                    else:
+                        unequal_str.append(f"{key}!= '{value}'")
+                unequal_str = " AND ".join(unequal_str)
+            final_data = ""
+            if equal_str and unequal_str:
+                final_data = f"{equal_str} AND {unequal_str}"
+            elif equal_str:
+                final_data = equal_str
+            elif unequal_str:
+                final_data = unequal_str
 
             cursor = self.connection.cursor()
-            query = f"DELETE FROM {self.table_name} WHERE {condition_str}"
-            cursor.execute(query, tuple(condition_values))
+            query = f"DELETE FROM {self.table_name} WHERE {final_data}"
+            logging.debug(query)
+            cursor.execute(query)
             self.connection.commit()
-            logging.info(f"成功从表 {self.table_name} 根据条件删除数据")
-            logging.info(f"传入参数: {conditions}")
+            logging.debug(f"成功从表 {self.table_name} 根据条件删除数据")
+            logging.debug(f"传入参数: equals: {equals}, unequals: {unequals}")
         except Exception as e:
             logging.error(f"从表 {self.table_name} 根据条件删除数据时出错: {e}")
-            logging.error(f"传入参数: {conditions}")
+            logging.error(f"传入参数: equals: {equals}, unequals: {unequals}")
         finally:
             cursor.close()
 
-    def fake_delete_by_conditions(self, conditions: dict):
+    def fake_delete_by_equals(self, equals: dict = None, unequals: dict = None):
         """
-        根据指定条件假删除数据（将 is_delete 字段修改为 1）
+        根据指定条件假删除数据（将 is_delete 字段修改为 1），并排除某些属性具有特定值的记录
         Args:
-            conditions (dict): 用于筛选的条件字典
+            equals (dict, optional): 包含假删除条件的字典，如 {'name': 'John', 'age': 25}
+            unequals (dict, optional): 包含需要排除的属性值对，如 {'status': 'inactive'}
         """
         try:
-            conditions_statements = []
-            condition_values = []
+            equal_str = []
+            if equals:
+                for key, value in equals.items():
+                    if value is None:
+                        equal_str.append(f"{key} IS NULL")
+                    else:
+                        equal_str.append(f"{key} = '{value}'")
+                equal_str = " AND ".join(equal_str)
 
-            for key, value in conditions.items():
-                conditions_statements.append(f"{key} = %s")
-                condition_values.append(value)
-
-            condition_str = " AND ".join(conditions_statements)
+            unequal_str = []
+            if unequals:
+                for key, value in unequals.items():
+                    if value is None:
+                        unequal_str.append(f"{key} IS NOT NULL")
+                    else:
+                        unequal_str.append(f"{key}!= '{value}'")
+                unequal_str = " AND ".join(unequal_str)
+            final_data = ""
+            if equal_str and unequal_str:
+                final_data = f"{equal_str} AND {unequal_str}"
+            elif equal_str:
+                final_data = equal_str
+            elif unequal_str:
+                final_data = unequal_str
 
             cursor = self.connection.cursor()
-            query = f"UPDATE {self.table_name} SET is_delete = 1 WHERE {condition_str}"
-            cursor.execute(query, tuple(condition_values))
+            query = f"UPDATE {self.table_name} SET is_delete = 1 WHERE {final_data}"
+            logging.debug(query)
+            cursor.execute(query)
             self.connection.commit()
-            logging.info(f"成功从表 {self.table_name} 根据条件假删除数据")
-            logging.info(f"传入参数: {conditions}")
+            logging.debug(f"成功从表 {self.table_name} 根据条件假删除数据")
+            logging.debug(f"传入参数: equals: {equals}, unequals: {unequals}")
         except Exception as e:
             logging.error(f"从表 {self.table_name} 根据条件假删除数据时出错: {e}")
-            logging.error(f"传入参数: {conditions}")
+            logging.error(f"传入参数: equals: {equals}, unequals: {unequals}")
         finally:
             cursor.close()
 
@@ -349,8 +426,8 @@ class MyBatisPlusUtils:
             cursor.executemany(query, values_list)
             self.connection.commit()
             cursor.close()
-            logging.info(f"成功向表 {self.table_name} 批量插入数据")
-            logging.info(f"传入参数: {entities}")
+            logging.debug(f"成功向表 {self.table_name} 批量插入数据")
+            logging.debug(f"传入参数: {entities}")
         except Exception as e:
             logging.error(f"向表 {self.table_name} 批量插入数据时出错: {e}")
             logging.error(f"传入参数: {entities}")
@@ -375,8 +452,8 @@ class MyBatisPlusUtils:
                 values.append(entity['id'])
                 cursor.execute(query, tuple(values))
             self.connection.commit()
-            logging.info(f"成功从表 {self.table_name} 批量更新数据")
-            logging.info(f"传入参数: {entities}")
+            logging.debug(f"成功从表 {self.table_name} 批量更新数据")
+            logging.debug(f"传入参数: {entities}")
         except Exception as e:
             logging.error(f"从表 {self.table_name} 批量更新数据时出错: {e}")
             logging.error(f"传入参数: {entities}")
@@ -395,8 +472,8 @@ class MyBatisPlusUtils:
                 query = f"DELETE FROM {self.table_name} WHERE id = %s"
                 cursor.execute(query, (id,))
             self.connection.commit()
-            logging.info(f"成功从表 {self.table_name} 批量根据主键 ID 删除数据")
-            logging.info(f"传入参数: {ids}")
+            logging.debug(f"成功从表 {self.table_name} 批量根据主键 ID 删除数据")
+            logging.debug(f"传入参数: {ids}")
         except Exception as e:
             logging.error(f"从表 {self.table_name} 批量根据主键 ID 删除数据时出错: {e}")
             logging.error(f"传入参数: {ids}")
@@ -415,8 +492,8 @@ class MyBatisPlusUtils:
                 query = f"UPDATE {self.table_name} SET is_delete = 1 WHERE id = %s"
                 cursor.execute(query, (id,))
             self.connection.commit()
-            logging.info(f"成功从表 {self.table_name} 批量假删除数据")
-            logging.info(f"传入参数: {ids}")
+            logging.debug(f"成功从表 {self.table_name} 批量假删除数据")
+            logging.debug(f"传入参数: {ids}")
         except Exception as e:
             logging.error(f"从表 {self.table_name} 批量假删除数据时出错: {e}")
             logging.error(f"传入参数: {ids}")
@@ -441,6 +518,15 @@ if __name__ == "__main__":
         table_name="t"
     )
 
+    mybatis_plus.fake_delete_by_equals(
+        {
+            'product_name': '氟比洛芬凝胶贴膏',
+        },
+        {
+            'brand': '以岭2',
+        }
+    )
+
     # 查找示例
     # result = mybatis_plus.find_by_id(1)
     # print(result)
@@ -450,9 +536,9 @@ if __name__ == "__main__":
     # print(all_results)
 
     # 查找指定查找示例
-    # criteria = {'is_delete': '0'}
-    # criteria_results = mybatis_plus.find_by_criteria(criteria)
-    # print(criteria_results)
+    # equals = {'is_delete': '0'}
+    # equals_results = mybatis_plus.find_by_equals(equals)
+    # print(equals_results)
 
     # 插入示例
     # entity_to_insert = {'product': 'SomeValueForPro31duct', 'product_name': 'Alice'}
