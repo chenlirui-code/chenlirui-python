@@ -1,11 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 """
+@Project :python 
 @File    :database_manager_util.py
+@IDE     :PyCharm 
 @Author  :Chen LiRui
 @Date    :2024/7/16 下午2:50 
-@explain : sql 操作
+@explain : 批量写入数据
 """
+import logging
+
+logging.basicConfig(level=logging.INFO)
 
 import mysql.connector
 
@@ -23,7 +28,7 @@ class DatabaseManager:
                 auth_plugin='mysql_native_password',
                 use_pure=False
             )
-            print("数据库连接成功")
+            logging.info("数据库连接成功")
             return conn
         except mysql.connector.Error as err:
             print(f"数据库连接失败: {err}")
@@ -65,10 +70,12 @@ class DatabaseManager:
 
                 # 提交事务
                 conn.commit()
-                print(f"在表 {table_name} 中插入或修改处理成功")
+                logging.info(f"在表 {table_name} 中插入或修改处理成功")
                 return 200
             except mysql.connector.Error as err:
-                print(f"在表 {table_name} 中插入或修改处理失败: {err}")
+                logging.error(f"在表 {table_name} 中插入或修改处理失败: {err}")
+                logging.error(data_list)
+                logging.error(table_name)
                 return 404
             finally:
                 cursor.close()
@@ -86,7 +93,7 @@ class DatabaseManager:
                     result_list.append(row)
                 return result_list
             except mysql.connector.Error as err:
-                print(f"查询失败: {err}")
+                logging.error(f"查询失败: {err}")
             finally:
                 cursor.close()
 
@@ -103,7 +110,7 @@ class DatabaseManager:
                     result_list.append(row)
                 return result_list
             except mysql.connector.Error as err:
-                print(f"查询失败: {err}")
+                logging.error(f"查询失败: {err}")
             finally:
                 cursor.close()
 
@@ -122,7 +129,7 @@ class DatabaseManager:
                 else:
                     return False
             except mysql.connector.Error as err:
-                print(f"查询失败: {err}")
+                logging.error(f"查询失败: {err}")
             finally:
                 cursor.close()
 
@@ -139,7 +146,7 @@ class DatabaseManager:
                     result_list.append(row)
                 return result_list
             except mysql.connector.Error as err:
-                print(f"查询失败: {err}")
+                logging.error(f"查询失败: {err}")
             finally:
                 cursor.close()
 
@@ -152,65 +159,24 @@ class DatabaseManager:
                 cursor.execute(update_query, (id_value,))
                 conn.commit()
                 if delete_value == 2:
-                    print("excel 传入 api 接口")
+                    logging.info("excel 传入 api 接口")
                 elif delete_value == 1:
-                    print(f"写入 {table_name} 成功")
+                    logging.info(f"写入 {table_name} 成功")
                 elif delete_value == 3:
-                    print(f"插入 {table_name} 数据异常")
+                    logging.error(f"插入 {table_name} 数据异常")
                 elif delete_value == 4:
-                    print("捕获到异常 键不存在于字典中 删除")
+                    logging.error("捕获到异常 键不存在于字典中 删除")
                 elif delete_value == 5:
-                    print("规格不符")
+                    logging.error("规格不符")
                 elif delete_value == 6:
-                    print("字典为空")
+                    logging.error("字典为空")
                 elif delete_value == 7:
-                    print("未找到有效的 dataSource 数据")
+                    logging.error("未找到有效的 dataSource 数据")
                 else:
-                    print("未知的 delete_value")
+                    logging.error("未知的 delete_value")
                 return 200
             except mysql.connector.Error as err:
-                print(f"修改失败: {err}")
+                logging.error(f"修改失败: {err}")
                 return 404
             finally:
                 cursor.close()
-
-    @staticmethod
-    def update_resp_json(conn, id, resp_json_table_name, new_resp_json):
-        if conn:
-            try:
-                cursor = conn.cursor()
-                update_query = f"UPDATE {resp_json_table_name} SET resp_json = %s WHERE id = %s"
-                cursor.execute(update_query, (new_resp_json, id))
-                conn.commit()
-                return 200
-            except mysql.connector.Error as err:
-                print(f"修改失败: {err}")
-                return 404
-            finally:
-                cursor.close()
-
-
-# if __name__ == "__main__":
-#
-#     # 连接数据库
-#     host = 'rm-bp18q46792588r2c2zo.mysql.rds.aliyuncs.com'
-#     user = 'bk_tm_clr'
-#     password = 'BKclr123&'
-#     database = 'bk_tm_db'
-#     conn = DatabaseManager.connect_to_database(host, user, password, database)
-#
-#     # 构造要插入的数据列表
-#     data_to_insert = [
-#         {'num': '4', 'text': '123'},
-#         {'num': '5', 'text': '123'}
-#     ]
-#     table_name = 'demo'
-#
-#     DatabaseManager.batch_write_data(
-#         conn, data_to_insert, table_name
-#     )
-#
-#     # 关闭数据库连接
-#     if conn:
-#         conn.close()
-#         print("数据库连接已关闭")

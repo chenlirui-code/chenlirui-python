@@ -1,35 +1,43 @@
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 """
-@File    : product_util.py
-@Author  : Chen LiRui
-@Date    : 2024/7/17 下午3:53
-@explain : 产品的处理工具类
+@Project :python 
+@File    :product_util.py
+@IDE     :PyCharm 
+@Author  :Chen LiRui
+@Date    :2024/7/17 下午3:53 
+@explain : 文件说明
 """
 import openpyxl
+
+from openpyxl import load_workbook
 
 from work.tianmao.publish.util.database_manager_util import DatabaseManager
 
 
-def read_xlsx_excel(url, sheet_name, column_name):
+def read_xlsx_excel(url, sheet_name, column_name_arr):
     '''
-    读取xlsx格式文件中指定列的数据
-    返回值：指定列的数据列表
+    读取 xlsx 格式文件中指定多列的数据
+    返回值：指定多列的数据列表，列表中的每个元素为一个字典，键为列名，值为该列对应的数据
     '''
     workbook = openpyxl.load_workbook(url)
     sheet = workbook[sheet_name]
     column_data = []
     # 找到指定列的索引
-    column_index = None
+    column_indices = {}
     for col in sheet.iter_cols():
-        if col[0].value == column_name:
-            column_index = col[0].column - 1
-            break
-    if column_index is None:
-        raise ValueError(f"未找到名为 {column_name} 的列")
+        if col[0].value in column_name_arr:
+            column_indices[col[0].value] = col[0].column - 1
+    # 检查指定列是否都存在
+    for column_name in column_name_arr:
+        if column_name not in column_indices:
+            raise ValueError(f"未找到名为 {column_name} 的列")
     # 遍历表格中的每一行，获取指定列的数据
     for row in sheet.rows:
-        column_data.append(row[column_index].value)
+        row_data = {}
+        for column_name, column_index in column_indices.items():
+            row_data[column_name] = row[column_index].value
+        column_data.append(row_data)
     return column_data
 
 
@@ -173,85 +181,3 @@ def split_next(product):
         return first_part, second_part
     else:
         return None, None
-
-
-if __name__ == '__main__':
-
-    # 连接数据库
-    host = 'rm-bp18q46792588r2c2zo.mysql.rds.aliyuncs.com'
-    user = 'bk_tm_clr'
-    password = 'BKclr123&'
-    database = 'bk_tm_db'
-    conn = DatabaseManager.connect_to_database(host, user, password, database)
-
-    table_name = 'excel_data'
-
-    # 示例用法
-    file_path = r'C:\Users\admin\Desktop\商品库存导出(4).xlsx'
-    sheet_name = 'OTC'
-    column_name = '商品名称'
-
-    excel_text = read_xlsx_excel(file_path, sheet_name, column_name)
-    excel_text.pop(0)
-
-    # 构造要插入的数据列表
-    data_to_insert = []
-
-    for product in excel_text:
-        product = product.strip().replace(' ', '')
-        print(product)
-        # pve  前面的两个属性  next 后面的两个属性
-        pve, next = split_product(product)
-        if pve is not None and next is not None:
-            # 执行这里的代码，如果 pve 和 next 都不为 None
-            # print(' 分割成功 ')
-            print(pve)
-            brand_list = split_pve_brand(pve)
-            product_name = split_pve_product_name(pve)
-            brand = '/'.join(brand_list)
-            # print(product_name)
-            # print(brand)
-            print(next)
-            specifications, company = split_next(next)
-            # print(specifications)
-            # print(company)
-            if specifications is None or company is None:
-                print(' 后面的 next 分割失败 ')
-                data_to_insert = [
-                    {
-                        'product': product
-                    },
-                ]
-            else:
-                # 构造要插入的数据列表
-                data_to_insert = [
-                    {
-                        'product_name': product_name,
-                        'brand': brand,
-                        'specifications': specifications,
-                        'company': company,
-                        'product': product
-                    },
-                ]
-        else:
-            # print(' 分割失败 ')
-            # 写到数据库中
-            # print(product)
-            data_to_insert = [
-                {
-                    'product': product
-                },
-            ]
-
-        DatabaseManager.batch_write_data(
-            conn, data_to_insert, table_name
-        )
-
-    # 关闭数据库连接
-    if conn:
-        conn.close()
-        print("数据库连接已关闭")
-
-    pass
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/

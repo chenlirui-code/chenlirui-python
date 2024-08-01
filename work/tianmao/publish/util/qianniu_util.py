@@ -11,9 +11,117 @@
 import json
 import requests
 import threading
+import logging
 
-from util.text_util import convert_unicode_to_text
+from util.ai_util import AiUtils
+from util.text_util import TextUtils
 from work.tianmao.publish.util.database_manager_util import DatabaseManager
+
+logging.basicConfig(level=logging.INFO)
+
+
+def requests_util(request, brand, product_name, headers):
+    params = {
+        'ac': [
+            'table',
+            'pagination',
+        ],
+    }
+    jsonBody = {
+        "filter": {
+            "status": {"text": "小二确认", "value": 3},
+            "title": f"{brand} {product_name}",
+            "cat0": {"value": 122966004, "text": "处方药"}
+        },
+        "pagination": {"current": 1, "pageSize": 100},
+        "parentTab": "spu-all", "childTab": ""
+    }
+
+    data = {
+        'jsonBody': json.dumps(jsonBody),
+    }
+
+    response = request.post(
+        'https://spu.taobao.com/manager/ajax/getModels.htm',
+        params=params,
+        headers=headers,
+        data=data
+    )
+    # print("Response Text:", response.text)
+    # raise 1
+    resp_json = response.json()
+    if not resp_json['success']:
+        raise ValueError('搜索天猫产品库数据错误')
+    else:
+        # print(resp_json)
+        temp_data_source = TextUtils.convert_unicode_to_text(process_data_source(resp_json))
+        # print(temp_data_source)
+        # raise 1
+        return temp_data_source
+
+
+def process_data_source(resp_json):
+    """ 删除掉不是 小二确认 的数据 只拿 dataSource 的数据 """
+    try:
+        if 'data' in resp_json and 'table' in resp_json['data'] and 'dataSource' in resp_json['data']['table']:
+            data_source = resp_json['data']['table']['dataSource']
+            # print(data_source)
+            new_data_source = []
+            for data in data_source:
+                if data['status'] == '小二确认':
+                    new_data = {
+                        'spuId': data['spuId'],
+                        'keyProps': data['keyProps'],
+                        'operation': data['operation']
+                    }
+                    new_data_source.append(new_data)
+            return new_data_source
+        else:
+            return []
+    except KeyError:
+        print("数据中缺少必要的属性")
+        return []
+
+
+def write_resp_json(
+        id, product_id, price,
+        sales,
+        brand, product_name,
+        specifications, company,
+        data_source, conn,
+        resp_json_table_name,
+        excel_table_name
+):
+    # 存到数据库中
+    data_to_insert = [
+        {
+            'id': id,
+            'product_id': product_id,
+            'price': price,
+            'sales': sales,
+            'brand': brand,
+            'product_name': product_name,
+            'specifications': specifications,
+            'company': company,
+            'resp_json': json.dumps(data_source),
+        },
+    ]
+    code = DatabaseManager.batch_write_data(
+        conn, data_to_insert, resp_json_table_name
+    )
+    if code == 200:
+        # print("写入 resp_json 成功")
+        delete_value = 1
+    else:
+        logging.error("写入 resp_json 失败")
+        delete_value = 3
+    # 传入 api接口 过修改 删除为 2
+    code = DatabaseManager.update_is_delete_by_id(
+        conn,
+        excel_table_name,
+        id,
+        delete_value
+    )
 
 
 class QianNiu:
@@ -22,73 +130,33 @@ class QianNiu:
     def search_product_by_brand_and_name(
             conn,
             id,
+            product,
+            product_id,
+            price,
             brand,
+            sales,
             product_name,
             specifications,
             company,
-            resp_json_table_name
+            resp_json_table_name,
+            excel_table_name
     ):
         '''根据品牌和产品名称搜索产品库'''
         # 创建一个会话对象
         request = requests.session()
 
-        # 设置初始的Cookie
-        cookies = [
-            {'name': 't', 'value': '71b08b05a7289634ac609055eef5f692', 'domain': '.taobao.com', 'path': '/',
-                    'secure': True, 'httpOnly': False, 'expirationDate': '2024/10/21 14:24:40'},
-                   {'name': 'xlly_s', 'value': '1', 'domain': '.taobao.com', 'path': '/', 'secure': True,
-                    'httpOnly': False, 'expirationDate': '2024/7/25 06:06:25'},
-                   {'name': '_tb_token_', 'value': 'taUhgdImh5lqfJQC5ZVp', 'domain': '.taobao.com', 'path': '/',
-                    'secure': True, 'httpOnly': False, 'expirationDate': None},
-                   {'name': '_samesite_flag_', 'value': 'true', 'domain': '.taobao.com', 'path': '/', 'secure': True,
-                    'httpOnly': True, 'expirationDate': None},
-                   {'name': '3PcFlag', 'value': '1721715873389', 'domain': '.taobao.com', 'path': '/', 'secure': True,
-                    'httpOnly': False, 'expirationDate': '2024/8/2 14:24:31'},
-                   {'name': 'cookie2', 'value': '1298a3ce5d391fca4b289c0cb7ba1416', 'domain': '.taobao.com',
-                    'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': None}, {'name': 'sgcookie',
-                                                                                             'value': 'E100Fb3J06yR%2Bz7QoARIW3OwATfEk0hIm02uc%2BqFUXW%2Bj%2BlhiYbE2Gm7ATuGFPpzmUKrEWkMdVx98Aeon1uMPCfqNt%2Bjda7P%2BN2L%2BWY%2BaJQuX%2B%2F97Gv2%2Bb3iU6oCDPt32R3T',
-                                                                                             'domain': '.taobao.com',
-                                                                                             'path': '/',
-                                                                                             'secure': True,
-                                                                                             'httpOnly': True,
-                                                                                             'expirationDate': '2025/7/23 14:24:40'},
-                   {'name': 'unb', 'value': '2218267619830', 'domain': '.taobao.com', 'path': '/', 'secure': True,
-                    'httpOnly': True, 'expirationDate': None}, {'name': 'sn',
-                                                                'value': '%E5%A5%BD%E9%9C%80%E8%8D%AF%E5%A4%A7%E8%8D%AF%E6%88%BF%E6%97%97%E8%88%B0%E5%BA%97%3A%E6%B1%9F%E7%AF%B1',
-                                                                'domain': '.taobao.com', 'path': '/', 'secure': True,
-                                                                'httpOnly': False, 'expirationDate': None},
-                   {'name': 'uc1', 'value': 'cookie21=Vq8l%2BKCLiw%3D%3D&cookie14=UoYcAjaH2i7NNw%3D%3D',
-                    'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None},
-                   {'name': 'csg', 'value': '8453f9ea', 'domain': '.taobao.com', 'path': '/', 'secure': True,
-                    'httpOnly': False, 'expirationDate': None},
-                   {'name': '_cc_', 'value': 'UIHiLt3xSw%3D%3D', 'domain': '.taobao.com', 'path': '/', 'secure': True,
-                    'httpOnly': False, 'expirationDate': '2025/7/23 14:24:40'},
-                   {'name': 'cancelledSubSites', 'value': 'empty', 'domain': '.taobao.com', 'path': '/', 'secure': True,
-                    'httpOnly': False, 'expirationDate': None},
-                   {'name': 'skt', 'value': 'ad43097c774572ae', 'domain': '.taobao.com', 'path': '/', 'secure': True,
-                    'httpOnly': True, 'expirationDate': None},
-                   {'name': '_mw_us_time_', 'value': '1721715883180', 'domain': 'myseller.taobao.com', 'path': '/',
-                    'secure': True, 'httpOnly': True, 'expirationDate': '2024/7/23 07:24:40'},
-                   {'name': 'cna', 'value': '+NsTH66fsGcCAduM6fpGjjRt', 'domain': '.taobao.com', 'path': '/',
-                    'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/27 06:24:42'},
-                   {'name': '_m_h5_tk', 'value': 'e342ed8872b58c984c3e1cc025d7687a_1721723445111',
-                    'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': False,
-                    'expirationDate': '2024/7/23 07:54:42'},
-                   {'name': '_m_h5_tk_enc', 'value': '27e3677a6cc880203d0c85501e496014', 'domain': '.taobao.com',
-                    'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2024/7/23 07:54:42'},
-                   {'name': 'tfstk',
-                    'value': 'fotr3o2O4MAfgDThgssF_VhuNqsRoGh_rH1CKpvhF_fkFz13YIdDP99hOMReTB55-bIWYIRJMaTWKH6HYsYFR7s5RX7e1ItWOHIWYk5cqwL5O_1FYpdZhfisfLpRvgcs1c_oShoNv6mCxdi_fBIn1fibl-b-NMYIgBdcgZfAL9VlZBf0o9CcE7bHtsbcIONlxMAHnxWFIzf3ra2cn9WwP7Ql-WBGrAc6GYFUP97PsKuTxk-Lfa5MUsrnsnWz91vlgkqFwjYsDpAnTksMWI-FSCiUDg9woiXyuv4cZN8kNtdEbufk0LxlN3cbV_xJnFtBivqhTEYG5FvoGrW2oLtVlhcaYaLDwFQeAjiOVF96vNxo45CfW9RNqEl04CjzZWBm-nKpzW4FrtBV1xkDmo9KBPcQkkULJZAO31MR7yUdrNXV1xk4JyQ84t5seN5..',
-                    'domain': '.taobao.com', 'path': '/', 'secure': False, 'httpOnly': False,
-                    'expirationDate': '2025/1/19 06:24:42'},
-                   {'name': 'isg', 'value': 'BMjIhoXeOnTyblXYOUbkRevFmTDacSx7ZThrd4J5GsM2XWjHKoXcCAAf0TUt7eRT',
-                    'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': False,
-                    'expirationDate': '2025/1/19 06:24:42'}
-        ]
-        # 遍历设置每个Cookie
-        for x in cookies:
-            request.cookies.set(name=x['name'], value=x['value'])
+        # # 设置初始的Cookie
+        # cookies = [
+        #     {'name': 'arms_uid', 'value': 'c86a4f1d-6809-4a93-b41a-c04bcdddef72', 'domain': 'alidocs.dingtalk.com', 'path': '/i/p/Y7kmbokZp3pgGLq2/docs', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/1/7 08:41:27'}, {'name': 'webp', 'value': 'true', 'domain': 'mms.pinduoduo.com', 'path': '/orders/order/carriage', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/16 13:30:07'}, {'name': '3rdPartyCookie', 'value': '1722241946906', 'domain': 'main.m.tmall.com', 'path': '/app/vip/h5-webapp', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'youdao_cnv_trk_id', 'value': 'Eb1Pya2SffAlgfvdlnbufxYX42bDzFG/lCOWdPNTxbuWziwSVIp0Xg4AKkaBCfi5UhQoWomgbbSGTm87eP68+vO6pP2VNxpOtd8Ar3oVbvBcYpg7HrvCERO4w73myaW4gNoe0X82Dli1eXdTGfry5AW8hAIbecn54BO1oNZqoJ2+2d1XrtaXypPwk7Sm/vRvF14i5jwHGY4E6rZl8gqLHft9SJ4hssyhPpym2tChEnw=', 'domain': '.youdao.com', 'path': '/conv/310726/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/14 02:32:48'}, {'name': 'youdao_cnv_trk_id', 'value': 'T9rMtrXc0huFwkt/RU8LmY0et2TlhP2hbNh7vJGERsSWziwSVIp0Xg4AKkaBCfi5UhQoWomgbbSGTm87eP68+gLHBwWi2Sq3quaQyVv8BO1cYpg7HrvCERO4w73myaW49yORYZiF53zJklxsSKVBkQW8hAIbecn54BO1oNZqoJ3DUIuoS+uN8XKLgnJKTCW0d713TaAZA2EPbj3D67j6fbYPB5LTid6dFKK2HjNYRpM=', 'domain': '.youdao.com', 'path': '/conv/315784/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/14 08:40:33'}, {'name': 'cq', 'value': 'ccp%3D1', 'domain': 'spu.taobao.com', 'path': '/manager', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/29 08:32:45'}, {'name': '_uab_collina', 'value': '172102519381464016298767', 'domain': 'login.taobao.com', 'path': '/member', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/19 06:33:13'}, {'name': '_uab_collina', 'value': '172171576504803270177964', 'domain': 'localhost', 'path': '/python', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/27 06:22:45'}, {'name': 'webp', 'value': 'true', 'domain': 'mms.pinduoduo.com', 'path': '/login', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/10 13:34:01'}, {'name': 'webp', 'value': 'true', 'domain': 'mms.pinduoduo.com', 'path': '/goods', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/10 13:44:07'}, {'name': 'cq', 'value': 'ccp%3D1', 'domain': 'ipublish.tmall.com', 'path': '/tmall', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/16 06:20:33'}, {'name': 'cq', 'value': 'ccp%3D1', 'domain': 'sell.publish.tmall.com', 'path': '/tmall', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/28 00:37:18'}, {'name': 'x-gpf-render-trace-id', 'value': '21056c9c17221270883664470e155c', 'domain': 'sell.publish.tmall.com', 'path': '/tmall', 'secure': False, 'httpOnly': False, 'expirationDate': None}, {'name': 'SameSite', 'value': 'none', 'domain': 'widget.1688.com', 'path': '/front', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'webp', 'value': 'true', 'domain': 'mms.pinduoduo.com', 'path': '/home', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/10 13:35:15'}, {'name': 'huya_ua', 'value': 'webh5&1.0.0&huya', 'domain': 'www.huya.com', 'path': '/g', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/12 00:48:32'}, {'name': 'cna', 'value': 'yAJre7xKihSFZvkFcQIE6gWS', 'domain': '.dingtalk.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/15 08:41:26'}, {'name': 'isg', 'value': 'BPf3mggwXUEyG9nNo2Os3rKShutBvMseuwOG2EmkG0Yn-Bc6UY6dbrkb3limEKOW', 'domain': '.dingtalk.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/1/7 09:17:53'}, {'name': 'tfstk', 'value': 'f_7mbCb52i-XzGhTnaYbfRmmYjrRGxT17O39BFpa4LJ7GFIYCOvG_LQOM1Qv_FX5hh7vksBuSL5w3jgVHNxGUtG6BK8tIY_5sCJ4CEpMQLR6lFgx048RysBMfS99QdXO_iF8JyCfGFTwSJULJsvBIG7DQALNXV1TPJeLJzCfGFTapGLlzJCk1LR2gmRaZ3R6iFuq7OJy4BRK3F8NQ_PkMCowQCRVa0kQlVJh7a_znSRiyhRSJEdDmd09EV006IxDUsJuLJ7lQnvFgL0apVe_edv588ElNgSVHQ6g-8YAv6Q6YZkzMISh6wxp4YnlCEAGOU_UpcKRjs7wqgaEIIsNMNjNwWmBOgWflGYn_r5koKxeG34ES9-wt6T58Jn92GfV73j7LDpFP_SdjteS7KIhaTxdyY3pkMCd5H7qngko4DlV_VOz6aosfnRWZpw6_KekfGUKL7VoAot2NIeLZ7m_mnRWZLFuZDJ20QO8A', 'domain': '.dingtalk.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/1/7 09:17:53'}, {'name': 'optimizelyEndUserId', 'value': 'oeu1720692108016r0.9464535459553158', 'domain': '.jetbrains.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/1/7 10:01:48'}, {'name': '_ga', 'value': 'GA1.1.1559392158.1720692109', 'domain': '.jetbrains.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/28 09:12:11'}, {'name': 'hit_flag', 'value': 'true', 'domain': '.jetbrains.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/7/6 10:01:52'}, {'name': 'cookie_country', 'value': 'CN', 'domain': '.jetbrains.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/13 16:00:00'}, {'name': 'JBA', 'value': '5e4e34b6-75f6-4ac6-bb73-aeff2a5d5001', 'domain': '.jetbrains.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2024/8/10 10:08:06'}, {'name': 'BIDUPSID', 'value': 'B124B9508E7B2A94D7C45613021C73CA', 'domain': '.baidu.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/15 13:33:54'}, {'name': 'PSTM', 'value': '1720704837', 'domain': '.baidu.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/15 13:33:54'}, {'name': 'BAIDUID', 'value': 'B124B9508E7B2A94D7C45613021C73CA:FG=1', 'domain': '.baidu.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/11 13:33:54'}, {'name': 'BD_UPN', 'value': '12314753', 'domain': 'www.baidu.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/3 10:54:48'}, {'name': 'ZFY', 'value': 'Gxn1Z1fWofQXOTVhz94UW2SW3JmW1G9HTn:BwvBGxCOU:C', 'domain': '.baidu.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/7/11 13:34:00'}, {'name': 'BAIDUID_BFESS', 'value': 'B124B9508E7B2A94D7C45613021C73CA:FG=1', 'domain': '.baidu.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/7/24 10:54:56'}, {'name': 'api_uid', 'value': 'CkCdqmaP30y57QCDE1OxAg==', 'domain': '.pinduoduo.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/15 13:34:01'}, {'name': '_nano_fp', 'value': 'XpmxX0mon0CYXpExXC_oPr_cwgEoY2zgSRqzmFFc', 'domain': 'mms.pinduoduo.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/15 13:34:01'}, {'name': '_bee', 'value': '3v0wGDebXMvLEmuJIPiGssmXXQoSQsOD', 'domain': '.pinduoduo.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/7/25 21:04:08'}, {'name': '_f77', 'value': '3e95a250-2df9-4770-bc88-ab8c9a4259e0', 'domain': '.pinduoduo.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/7/25 21:04:08'}, {'name': '_a42', 'value': 'fce9efbf-26c9-4f86-ba3c-5682a47c7d68', 'domain': '.pinduoduo.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/7/25 21:04:08'}, {'name': 'rckk', 'value': '3v0wGDebXMvLEmuJIPiGssmXXQoSQsOD', 'domain': '.pinduoduo.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/7/25 21:04:08'}, {'name': 'ru1k', 'value': '3e95a250-2df9-4770-bc88-ab8c9a4259e0', 'domain': '.pinduoduo.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/7/25 21:04:08'}, {'name': 'ru2k', 'value': 'fce9efbf-26c9-4f86-ba3c-5682a47c7d68', 'domain': '.pinduoduo.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/7/25 21:04:08'}, {'name': 'MUID', 'value': '097B74E54E006E140C9B605C4F7C6FC9', 'domain': '.bing.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/18 08:23:58'}, {'name': 'SRM_B', 'value': '097B74E54E006E140C9B605C4F7C6FC9', 'domain': '.c.bing.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/18 08:23:58'}, {'name': 'MUID', 'value': '097B74E54E006E140C9B605C4F7C6FC9', 'domain': '.clarity.ms', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/18 08:23:59'}, {'name': '__yamid_new', 'value': 'CAD0D1BC75C0000176736150107018B4', 'domain': '.huya.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/16 00:47:36'}, {'name': 'game_did', 'value': 'UIV7bIeWP0fQWpYE-zkHJhNUxR41J5dy6QU', 'domain': '.huya.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/16 00:47:36'}, {'name': 'SoundValue', 'value': '0.50', 'domain': '.huya.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/12 00:48:26'}, {'name': 'udb_guiddata', 'value': 'a76e793c5c864a8eb60374f7ed47dd38', 'domain': '.huya.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/12 00:47:36'}, {'name': 'guid', 'value': '0a898d142e7d906649011fe320e3b52b', 'domain': '.huya.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/11 00:48:26'}, {'name': 'udb_deviceid', 'value': 'w_864065473229836288', 'domain': '.huya.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/16 00:47:56'}, {'name': 'HMACCOUNT_BFESS', 'value': '65E2A98AEA68A1C6', 'domain': '.hm.baidu.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/16 00:47:37'}, {'name': 'Hm_lvt_51700b6c722f5bb4cf39906a596ea41f', 'value': '1720745258', 'domain': '.huya.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/12 00:48:27'}, {'name': '__yamid_tt1', 'value': '0.9465401093826094', 'domain': '.huya.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/16 00:47:37'}, {'name': 'sdidshorttest', 'value': 'test', 'domain': '.huya.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/16 00:47:40'}, {'name': 'sdid', 'value': '0UnHUgv0_qmfD4KAKlwzhqbCibi1fmwXrQG7UGmtmCUNmnO24LQRvXCb8AtY6GMazHJEMHPcWzVJ0oiDPiq7f_63XYTCCpbYGm4INhiYRjO3WVkn9LtfFJw_Qo4kgKr8OZHDqNnuwg612sGyflFn1dgnhHnIq-7RJHimZ8Te9ZudhroZEN3O4rzYCz71weYAk', 'domain': '.huya.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/16 00:47:40'}, {'name': 'sdidtest', 'value': '0UnHUgv0_qmfD4KAKlwzhqbCibi1fmwXrQG7UGmtmCUNmnO24LQRvXCb8AtY6GMazHJEMHPcWzVJ0oiDPiq7f_63XYTCCpbYGm4INhiYRjO3WVkn9LtfFJw_Qo4kgKr8OZHDqNnuwg612sGyflFn1dgnhHnIq-7RJHimZ8Te9ZudhroZEN3O4rzYCz71weYAk', 'domain': '.huya.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/16 00:47:40'}, {'name': 'guid', 'value': '0a898d142e7d906649011fe320e3b52b', 'domain': 'www.huya.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/12 00:48:33'}, {'name': 'alphaValue', 'value': '0.80', 'domain': '.huya.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/12 00:48:26'}, {'name': 'isInLiveRoom', 'value': 'true', 'domain': '.huya.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/12 00:48:26'}, {'name': 'huya_ua', 'value': 'webh5&1.0.0&huya', 'domain': 'www.huya.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/12 00:48:33'}, {'name': 'H_WISE_SIDS', 'value': '60236_60360', 'domain': '.baidu.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/12 00:50:06'}, {'name': 'uuid_tt_dd', 'value': '10_28717870100-1720745450648-845090', 'domain': '.csdn.net', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/16 00:50:45'}, {'name': 'Hm_lvt_ec8a58cd84a81850bcbd95ef89524721', 'value': '1720745446', 'domain': '.blog.csdn.net', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/12 00:50:46'}, {'name': 'id', 'value': '22174ef376f2005b||t=1720745453|et=730|cs=002213fd48d35b2383f70303cb', 'domain': '.doubleclick.net', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/8/21 03:56:32'}, {'name': 'ar_debug', 'value': '1', 'domain': '.googleadservices.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2024/10/10 00:50:48'}, {'name': 'HOSUPPORT', 'value': '1', 'domain': '.passport.baidu.com', 'path': '/', 'secure': False, 'httpOnly': True, 'expirationDate': '2025/8/29 06:42:15'}, {'name': 'HOSUPPORT_BFESS', 'value': '1', 'domain': '.passport.baidu.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/8/29 06:42:15'}, {'name': 'UBI', 'value': 'fi_PncwhpxZ%7ETaJc6wCJLLn1hH-qU0ENBOuP6PjFB0EM1v2MwZ6RyseUIVEjSX0goRNXR%7ESRcUxliRX%7EfdM', 'domain': '.passport.baidu.com', 'path': '/', 'secure': False, 'httpOnly': True, 'expirationDate': '2025/8/16 00:54:38'}, {'name': 'UBI_BFESS', 'value': 'fi_PncwhpxZ%7ETaJc6wCJLLn1hH-qU0ENBOuP6PjFB0EM1v2MwZ6RyseUIVEjSX0goRNXR%7ESRcUxliRX%7EfdM', 'domain': '.passport.baidu.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/8/16 00:54:38'}, {'name': 'USERNAMETYPE', 'value': '1', 'domain': '.passport.baidu.com', 'path': '/', 'secure': False, 'httpOnly': True, 'expirationDate': '2025/8/29 06:41:54'}, {'name': 'USERNAMETYPE_BFESS', 'value': '1', 'domain': '.passport.baidu.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/8/29 06:41:54'}, {'name': 'BAIDUID_BFESS', 'value': '6781D9525888D422C8F335B97AB60130:FG=1', 'domain': '.hao123.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/7/12 00:58:31'}, {'name': 'Hm_lvt_ac8848dc06687b4e8936029238c24f9d', 'value': '1720761975', 'domain': '.soft.flash.cn', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/12 05:26:14'}, {'name': '_octo', 'value': 'GH1.1.2113264164.1720944993', 'domain': '.github.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/7/14 08:16:31'}, {'name': 'logged_in', 'value': 'no', 'domain': '.github.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/7/14 08:16:31'}, {'name': 'ncountryCodeCookie', 'value': 'CN', 'domain': '.jetbrains.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/14 10:28:19'}, {'name': 'cookie_consent', 'value': 'functionality_storage.analytics_storage.ad_storage.personalization_storage', 'domain': '.jetbrains.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/13 16:00:00'}, {'name': 'jb_cookies_consent_closed', 'value': 'true', 'domain': '.jetbrains.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/13 16:00:00'}, {'name': '_gcl_au', 'value': '1.1.120361040.1720952952', 'domain': '.jetbrains.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/10/12 10:29:12'}, {'name': '_mkto_trk', 'value': 'id:426-QVD-114&token:_mch-jetbrains.com-1720952952983-53698', 'domain': '.jetbrains.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/28 09:12:11'}, {'name': 'li_sugr', 'value': '005ba4ac-fa85-42a4-9cd3-c38dcdee4583', 'domain': '.linkedin.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2024/10/22 09:12:12'}, {'name': 'bcookie', 'value': '"v=2&f639c55f-d6a4-473e-808b-550b5935db3d"', 'domain': '.linkedin.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/7/24 09:12:12'}, {'name': 'bscookie', 'value': '"v=1&20240714102914663348c1-b370-4886-83d4-478f1e70d187AQG7hERgkccvpmphT-kYHTwc8YqC7Ciz"', 'domain': '.www.linkedin.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/7/14 10:29:13'}, {'name': 'ar_debug', 'value': '1', 'domain': 'px.ads.linkedin.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2024/8/23 19:41:18'}, {'name': '_fbp', 'value': 'fb.1.1720952963945.78508225290057623', 'domain': '.jetbrains.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/10/13 05:52:15'}, {'name': 'OUTFOX_SEARCH_USER_ID', 'value': '1278603351@171.43.254.2', 'domain': '.youdao.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/19 02:32:48'}, {'name': 'OUTFOX_SEARCH_USER_ID_NCOO', 'value': '984207281.4127622', 'domain': '.youdao.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/19 02:32:49'}, {'name': '__guid', 'value': '156009789.4604101151283340300.1721022328906.2878', 'domain': '.360.cn', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/5/11 05:45:28'}, {'name': '__gid', 'value': '156009789.432943984.1721022328907.1721022328907.1', 'domain': '.360.cn', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/19 05:45:28'}, {'name': 'OTZ', 'value': '7645312_24_24__24_', 'domain': 'ogs.google.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2024/8/14 05:51:42'}, {'name': 'muc_ads', 'value': 'c06f8cdf-d628-4a1b-8394-8caa23b5eb50', 'domain': '.t.co', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/19 05:52:16'}, {'name': 'guest_id_marketing', 'value': 'v1%3A172102273760838578', 'domain': '.twitter.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/19 05:52:16'}, {'name': 'guest_id_ads', 'value': 'v1%3A172102273760838578', 'domain': '.twitter.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/19 05:52:16'}, {'name': 'personalization_id', 'value': '"v1_AgVCdCNz5Wcm00ylOD/k1Q=="', 'domain': '.twitter.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/19 05:52:16'}, {'name': 'guest_id', 'value': 'v1%3A172102273760838578', 'domain': '.twitter.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/19 05:52:16'}, {'name': 't', 'value': '0ca0777189a6488fbdedfa7e32cf30d7', 'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2024/10/27 16:32:29'}, {'name': 'cna', 'value': 'q7AbH0lL9D8BASQOA2nCRqh0', 'domain': '.tmall.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/19 06:33:14'}, {'name': '_bl_uid', 'value': 'bmlLpy2vmjeleRzdh9g2u5ebOpah', 'domain': 'passport.taobao.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/1/11 06:33:38'}, {'name': '_ati', 'value': '3840050780662', 'domain': '.dadaowl.cn', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/19 06:44:59'}, {'name': '_ga_H30R9PNQFN', 'value': 'GS1.1.1721026673.1.0.1721026673.0.0.0', 'domain': '.support.google.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/19 06:57:53'}, {'name': '_ga', 'value': 'GA1.3.634350229.1721026674', 'domain': '.support.google.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/19 06:57:54'}, {'name': '__sec_t_key', 'value': '83d6eb12-448d-4e3c-840a-52b0f9eb18ca', 'domain': 'www.baidu.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/10/23 07:01:52'}, {'name': 'ttwid', 'value': '1%7C6xBYkCSqsT1zLnxk7uhv2-rTRQgwRss9B-BgqPT_D9o%7C1721032836%7Cdd8cc0566549d2eb7edabbe799edae2fd6b0973589e10eff4e3c2433e3d10c9c', 'domain': '.doubao.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/7/15 08:40:34'}, {'name': 's_v_web_id', 'value': 'verify_lymqiiux_7mmVzO1X_i5pw_4An7_8jUk_TT2dax7AXais', 'domain': 'www.doubao.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/9/13 08:40:35'}, {'name': 'NID', 'value': '515=qtZMPzK9ruiGZD7HIQv_sOv3VWUskG3xOh9KIR2U_8ohT_rY3WLdLEHaB6nPlPzi_t_SjJ5quhZxiYCZb1dZ6Urb-pZ_9fJ3ommqJTMcTjOMjEK_MCbyj_62OfvZk9qVZtdVzHCJIKGCCZgE7JaA9i_U5xTI1cB3iiDiwr285EI', 'domain': '.google.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/1/15 06:19:59'}, {'name': '_bl_uid', 'value': '1plXsyjUotz0vvxt3mkbo90jO3z2', 'domain': 'spu.taobao.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/1/12 06:20:02'}, {'name': 'thw', 'value': 'cn', 'domain': '.taobao.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/16 08:32:03'}, {'name': 'umdata_', 'value': 'GE188310390EE04A6834893AB3FB53B9D81A718', 'domain': '.ynuf.alipay.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/7/16 08:32:05'}, {'name': 'log_Id_pv', 'value': '2', 'domain': '.csdn.net', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/21 03:56:30'}, {'name': '__gads', 'value': 'ID=8783def21b8284b6:T=1720745452:RT=1721188596:S=ALNI_MbehxUjVjQIX1vRzXiwL4s5pxwDQg', 'domain': '.csdn.net', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/6 00:50:52'}, {'name': '__gpi', 'value': 'UID=00000e8dbb03cdd9:T=1720745452:RT=1721188596:S=ALNI_MYgWEWvetRlHKduDxCqz6sd3f5Lyw', 'domain': '.csdn.net', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/6 00:50:52'}, {'name': '__eoi', 'value': 'ID=8ea7fac3a4256e34:T=1720745452:RT=1721188596:S=AA-AfjaQsFZBrGILNhwVaM6NkaHD', 'domain': '.csdn.net', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/1/8 00:50:52'}, {'name': 'Hm_lvt_6bcd52f51e9b3dce32bec4a3997715ac', 'value': '1720745446,1721188594', 'domain': '.csdn.net', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/17 03:56:33'}, {'name': 'loginbox_strategy', 'value': '%7B%22taskId%22%3A349%2C%22abCheckTime%22%3A1721188591906%2C%22version%22%3A%22exp11%22%2C%22blog-threeH-dialog-exp11tipShowTimes%22%3A2%2C%22blog-threeH-dialog-exp11%22%3A1721188591907%7D', 'domain': '.csdn.net', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/16 03:56:34'}, {'name': 'log_Id_view', 'value': '56', 'domain': '.csdn.net', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/21 03:56:35'}, {'name': 'infoc_client_uuid', 'value': '7892db11a85b1541a758b3e3f72aed00', 'domain': 'www.drivergenius.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/16 12:31:04'}, {'name': 'e-uid2', 'value': 'CwK8u', 'domain': '.iscrv.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/21 13:28:21'}, {'name': 'area_code', 'value': '101200111', 'domain': 'www.hiduba.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/21 13:28:21'}, {'name': 'WEATHER_COOKIE_CITY_KEY', 'value': '101200111%7C%E6%AD%A6%E6%98%8C', 'domain': 'www.hiduba.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/17 13:28:21'}, {'name': 'UM_distinctid', 'value': '190c0e12f6e5ec-004b6000fcfee7-26001f51-1fa400-190c0e12f6f1cbf', 'domain': '.hiduba.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/1/15 13:28:21'}, {'name': 'CNZZDATA30069637', 'value': 'cnzz_eid%3D1866425353-1721222902-%26ntime%3D1721222902', 'domain': 'www.hiduba.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/1/15 13:28:21'}, {'name': 'Qs_lvt_508097', 'value': '1721222901', 'domain': '.hiduba.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/17 13:28:21'}, {'name': 'Qs_pv_508097', 'value': '3017839272125069000', 'domain': '.hiduba.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/17 13:28:21'}, {'name': 'Hm_lvt_47c19b16e7362939c0067988e0da87cd', 'value': '1721222902', 'domain': '.www.hiduba.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/17 13:28:21'}, {'name': 'v1', 'value': '^/=oVaeF<f>$2kP^LSE=', 'domain': '.mediav.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/21 13:28:21'}, {'name': 'bhuid', 'value': '26ce5fbc-e63e-4146-bbed-c5ed498b956f', 'domain': '.iscrv.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/21 13:28:21'}, {'name': 'bhuid_t', 'value': 'FDFHADKAEK', 'domain': '.iscrv.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/21 13:28:21'}, {'name': 'amrkts', 'value': '1721241710', 'domain': '.mediav.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/21 13:28:21'}, {'name': 'QiHooGUID', 'value': 'BCBABF1F8EA0ADECF979E11EF897C815.1721222915991', 'domain': '.so.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/21 13:28:35'}, {'name': '__guid', 'value': '15484592.715139484259623200.1721222916126.7395', 'domain': '.so.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/5/13 13:28:36'}, {'name': 'so-like-red', 'value': '2', 'domain': 'www.so.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/21 13:28:36'}, {'name': 'dpr', 'value': '1', 'domain': 'www.so.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/17 13:28:36'}, {'name': 'webp', 'value': '1', 'domain': 'www.so.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/17 13:28:36'}, {'name': '__huid', 'value': '11IKmll4f0SOqMQMG7ACvadZdwhXBYrAhJxC+FNARSbg4=', 'domain': '.360.cn', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/21 13:28:36'}, {'name': 'so_huid', 'value': '11IKmll4f0SOqMQMG7ACvadZdwhXBYrAhJxC%2BFNARSbg4%3D', 'domain': '.so.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/21 13:28:36'}, {'name': '__huid', 'value': '11IKmll4f0SOqMQMG7ACvadZdwhXBYrAhJxC%2BFNARSbg4%3D', 'domain': '.so.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/21 13:28:36'}, {'name': '__huid1', 'value': '11IKmll4f0SOqMQMG7ACvadZdwhXBYrAhJxC+FNARSbg4=|1721222916', 'domain': '.mediav.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/21 13:28:36'}, {'name': '_nano_fp', 'value': 'XpmxXpPxXqganqXblT_uCLNkX83xkvqcDb0BS4Sf', 'domain': 'aid.pinduoduo.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/21 13:31:57'}, {'name': 'infoc_client_uuid', 'value': '21690118e474e644beb8506c02dd08a1', 'domain': 'jump.duba.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/16 13:33:31'}, {'name': 'UM_distinctid', 'value': '190c0e5ecb3be3-081eccc16007f7-26001f51-1fa400-190c0e5ecb412d4', 'domain': '.iduba.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/1/15 13:33:32'}, {'name': 'area_code', 'value': '101200111', 'domain': 'www.iduba.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/21 13:33:32'}, {'name': 'WEATHER_COOKIE_CITY_KEY', 'value': '101200111%7C%E6%AD%A6%E6%98%8C', 'domain': 'www.iduba.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/17 13:33:32'}, {'name': 'Hm_lvt_47c19b16e7362939c0067988e0da87cd', 'value': '1721240183,1721240274,1721240379,1721240529', 'domain': '.www.iduba.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/18 00:25:38'}, {'name': 'CNZZDATA30069637', 'value': 'cnzz_eid%3D311398444-1721223212-https%253A%252F%252Fjump.duba.com%252F%26ntime%3D1721262338', 'domain': 'www.iduba.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/1/16 00:25:38'}, {'name': 'STOKEN', 'value': '2ef408a9244297f995b455ed8e97516cee4b098bb8620b7953580f56d1ee21d3', 'domain': '.pan.baidu.com', 'path': '/', 'secure': False, 'httpOnly': True, 'expirationDate': '2024/8/18 03:11:48'}, {'name': 'dc_session_id', 'value': '10_1721293607344.554547', 'domain': '.csdn.net', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/22 09:06:47'}, {'name': 'locale', 'value': 'zh-cn', 'domain': 'flowus.cn', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/19 12:52:53'}, {'name': 'passport_web_did', 'value': '7394271159430283265', 'domain': '.feishu.cn', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/7/22 01:48:29'}, {'name': 'passport_trace_id', 'value': '7394271159431036956', 'domain': '.feishu.cn', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/7/22 01:48:29'}, {'name': 'QXV0aHpDb250ZXh0', 'value': 'c8b140b8105240a8a6e305f66fd8fd9d', 'domain': '.feishu.cn', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/7/22 01:48:29'}, {'name': 'session', 'value': 'U7CK1RF-5e9g3463-4a8c-49a6-89f3-271c8a6a841e-NN5W4', 'domain': '.feishu.cn', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/7/22 01:48:30'}, {'name': 'is_anonymous_session', 'value': '1', 'domain': '.feishu.cn', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2024/8/21 01:53:43'}, {'name': 'lang', 'value': 'zh', 'domain': '.feishu.cn', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/26 01:48:31'}, {'name': 'i18n_locale', 'value': 'zh', 'domain': '.feishu.cn', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/26 01:48:31'}, {'name': '__tea__ug__uid', 'value': '7170891721612911698', 'domain': '.feishu.cn', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/10/20 01:48:31'}, {'name': '_csrf_token', 'value': 'c0cfa1c28477f3cecaf9801476788345dc3261c3-1721612915', 'domain': '.feishu.cn', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2024/8/21 01:48:31'}, {'name': 'locale', 'value': 'zh-CN', 'domain': '.feishu.cn', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/7/22 01:53:45'}, {'name': 'trust_browser_id', 'value': 'b356dced-cb89-441f-8c8e-d5cdb355a061', 'domain': '.feishu.cn', 'path': '/', 'secure': False, 'httpOnly': True, 'expirationDate': '2025/8/26 01:53:46'}, {'name': '_gcl_au', 'value': '1.1.1919396519.1721612914', 'domain': '.feishu.cn', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/10/20 01:48:34'}, {'name': 's_v_web_id', 'value': 'verify_lywbvmwo_Cz4nd5OU_a6HP_4SHJ_BN9w_z2UR2uiPRpd3', 'domain': 'accounts.feishu.cn', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/9/20 01:48:34'}, {'name': '_ga', 'value': 'GA1.3.781898742.1721612914', 'domain': '.accounts.feishu.cn', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/26 01:53:46'}, {'name': 'swp_csrf_token', 'value': '3a25c259-a44b-4c55-947d-10f8f627b2d7', 'domain': '.feishu.cn', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2024/8/6 01:53:45'}, {'name': 't_beda37', 'value': 'e7f3fb20fd12484c1de44dbb88eb6e8dfad23fc9ce4cadcc4bbfec304647cd10', 'domain': '.feishu.cn', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2024/8/6 01:53:45'}, {'name': '_ga', 'value': 'GA1.1.781898742.1721612914', 'domain': '.feishu.cn', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/26 01:53:46'}, {'name': '_ga_VPYRHN104D', 'value': 'GS1.1.1721620233.2.0.1721620235.58.0.0', 'domain': '.feishu.cn', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/26 03:50:35'}, {'name': 'lid', 'value': '%E5%A5%BD%E9%9C%80%E8%8D%AF%E5%A4%A7%E8%8D%AF%E6%88%BF%E6%97%97%E8%88%B0%E5%BA%97%3A%E6%B1%9F%E7%AF%B1', 'domain': '.login.taobao.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/7/29 16:32:29'}, {'name': 'lid', 'value': '%E5%A5%BD%E9%9C%80%E8%8D%AF%E5%A4%A7%E8%8D%AF%E6%88%BF%E6%97%97%E8%88%B0%E5%BA%97%3A%E6%B1%9F%E7%AF%B1', 'domain': '.tmall.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/7/29 16:32:29'}, {'name': 'lid', 'value': '%E5%A5%BD%E9%9C%80%E8%8D%AF%E5%A4%A7%E8%8D%AF%E6%88%BF%E6%97%97%E8%88%B0%E5%BA%97%3A%E6%B1%9F%E7%AF%B1', 'domain': '.tmall.hk', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/7/29 16:32:29'}, {'name': '__sid__', 'value': 'fc97536a493afa74f31245451339346264b5492720ca53c2f5253670d49b77b38a16eeb632b59001459d2110db5a53c1d91c9b59d56e47accb0289062917a395757ea3545d1fc1964c91b986ae518e0ff4028bd956240833', 'domain': 'survey.taobao.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2024/7/29 08:47:49'}, {'name': 'survey', 'value': '331818c278efda7a644b3b0c94b89f0d', 'domain': '.survey.taobao.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2024/8/21 08:47:49'}, {'name': '_bl_uid', 'value': 'tpl2wy81wImq1nuL3v6F0FgpjRbg', 'domain': 'survey.taobao.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/1/18 08:47:52'}, {'name': 'Pycharm-3da27b31', 'value': 'cd302966-c53d-4a2e-93fc-6703b3ca9bf5', 'domain': 'localhost', 'path': '/', 'secure': False, 'httpOnly': True, 'expirationDate': '2025/8/27 06:22:44'}, {'name': 'CLID', 'value': 'cfa658ae800149afb21c2134e2828dc5.20240711.20250724', 'domain': 'www.clarity.ms', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/7/24 08:23:05'}, {'name': '_clck', 'value': '17x9otm%7C2%7Cfnq%7C0%7C1656', 'domain': '.jetbrains.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/24 08:23:05'}, {'name': 'UserMatchHistory', 'value': 'AQIUPALH02IrYgAAAZDj1kWBnpwcYs7E0vHWIuP-eK8Lv-5HRbtqnlzNw0CZ8dumm97AXFJk8Xc1JA', 'domain': '.linkedin.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2024/8/23 08:23:06'}, {'name': 'AnalyticsSyncHistory', 'value': 'AQK6f4mCr54-OQAAAZDj1kWBQi1n3345IEbJbGd5wVY-SUiaxTunm_s4xtKueY7m8_uPdGcI5EaSWrrJdRDqZg', 'domain': '.linkedin.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2024/8/23 08:23:06'}, {'name': 'MR', 'value': '0', 'domain': '.c.bing.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2024/7/31 08:23:58'}, {'name': 'MR', 'value': '0', 'domain': '.c.clarity.ms', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2024/7/31 08:23:59'}, {'name': 'AWSALB', 'value': '7iVC9nfd4hL2gt6I9aAOKXQn8g4gBrbcnmG9AXF/ynScmoY+UTpzyMISdDxt+KbxVCu8GHX+FMwigdIR0PtIq8VB++rG9BTJLkTwhQHSuQoFBd/IsQtq2RKkpr0I', 'domain': 'plugins.jetbrains.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/7/31 09:12:12'}, {'name': 'AWSALBCORS', 'value': '7iVC9nfd4hL2gt6I9aAOKXQn8g4gBrbcnmG9AXF/ynScmoY+UTpzyMISdDxt+KbxVCu8GHX+FMwigdIR0PtIq8VB++rG9BTJLkTwhQHSuQoFBd/IsQtq2RKkpr0I', 'domain': 'plugins.jetbrains.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2024/7/31 09:12:12'}, {'name': '_ga_9J976DJZ68', 'value': 'GS1.1.1721809385.4.1.1721812732.60.0.0', 'domain': '.jetbrains.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/28 09:18:52'}, {'name': 'COOKIE_SESSION', 'value': '166341_0_3_3_5_0_0_0_3_0_0_0_166342_0_2_0_1721818499_0_1721818497%7C3%230_0_1721818497%7C1', 'domain': 'www.baidu.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/24 10:54:58'}, {'name': 'device_uuid', 'value': '!3e175a82-950d-49f4-a046-04086118dd77', 'domain': 'waimaie.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/29 00:33:49'}, {'name': 'uuid_update', 'value': 'true', 'domain': 'waimaie.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/29 00:33:49'}, {'name': '_lxsdk_cuid', 'value': '190e74ef7d6c8-01a744d3e23947-26001f51-1fa400-190e74ef7d6c8', 'domain': '.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/29 00:33:50'}, {'name': '_lxsdk', 'value': '190e74ef7d6c8-01a744d3e23947-26001f51-1fa400-190e74ef7d6c8', 'domain': '.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/29 00:33:50'}, {'name': 'uuid_update', 'value': 'true', 'domain': 'yiyao.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/29 00:34:40'}, {'name': 'device_uuid', 'value': '!3e175a82-950d-49f4-a046-04086118dd77', 'domain': 'yiyao.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/29 06:43:56'}, {'name': 'pushToken', 'value': '0_k6r3nk9geg_-A4vpzPDjbdzmXTZKgL_wQ_6BAQn6qw*', 'domain': 'yiyao.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/29 00:34:41'}, {'name': 'WEBDFPID', 'value': '4y389798082u505u17u749y570658yzx809v25uxx149795841y1zu3z-2037227681615-1721867681615MWGCSQAfd79fef3d01d5e9aadc18ccd4d0c95072731', 'domain': '.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/8/29 06:43:57'}, {'name': 'token', 'value': '0_k6r3nk9geg_-A4vpzPDjbdzmXTZKgL_wQ_6BAQn6qw*', 'domain': 'waimaieapp.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/10/23 00:38:09'}, {'name': 'bsid', 'value': 'v3vStaEqxm7OfqfYMBDaeJjSMhvN_dRqGWXANmrTuO7taR-4-VbKBaooQ9RJZCj9ywqDce5DUYH-CZ0HFNSSrQ', 'domain': 'waimaieapp.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/10/23 00:38:09'}, {'name': 'pushToken', 'value': '0_k6r3nk9geg_-A4vpzPDjbdzmXTZKgL_wQ_6BAQn6qw*', 'domain': 'waimaie.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/25 00:38:09'}, {'name': '_bl_uid', 'value': '9Xl30z660a6k4gtLb5y0dbq0Cmdd', 'domain': 'sell.publish.tmall.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/1/21 01:09:40'}, {'name': 'SAVEUSERID', 'value': '6651fa3f7530e61329fc241caf', 'domain': '.passport.baidu.com', 'path': '/', 'secure': False, 'httpOnly': True, 'expirationDate': '2025/8/29 06:41:54'}, {'name': 'HISTORY', 'value': '7fdbd282c31ddca4053ed67a443945c607', 'domain': '.passport.baidu.com', 'path': '/', 'secure': False, 'httpOnly': True, 'expirationDate': '2025/8/29 06:41:54'}, {'name': 'SAVEUSERID_BFESS', 'value': '6651fa3f7530e61329fc241caf', 'domain': '.passport.baidu.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/8/29 06:41:54'}, {'name': 'HISTORY_BFESS', 'value': '7fdbd282c31ddca4053ed67a443945c607', 'domain': '.passport.baidu.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/8/29 06:41:54'}, {'name': 'BDUSS', 'value': 'ZhNEY5WTNXTHJMNkxGUFJKUTZ0VVdqSUtxVWNkNE12QU1Bb3U4eU1ORzJnTWxtSVFBQUFBJCQAAAAAAQAAAAEAAAD6i7J9YmtkeWZ5czAxAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALbzoWa286FmNH', 'domain': '.baidu.hk', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/8/29 06:41:54'}, {'name': 'BDUSS', 'value': 'ZhNEY5WTNXTHJMNkxGUFJKUTZ0VVdqSUtxVWNkNE12QU1Bb3U4eU1ORzJnTWxtSVFBQUFBJCQAAAAAAQAAAAEAAAD6i7J9YmtkeWZ5czAxAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALbzoWa286FmNH', 'domain': '.apollo.auto', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2024/8/24 06:41:54'}, {'name': 'BDUSS', 'value': 'ZhNEY5WTNXTHJMNkxGUFJKUTZ0VVdqSUtxVWNkNE12QU1Bb3U4eU1ORzJnTWxtSVFBQUFBJCQAAAAAAQAAAAEAAAD6i7J9YmtkeWZ5czAxAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALbzoWa286FmNH', 'domain': '.yoojia.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/7/25 06:41:54'}, {'name': 'eplt', 'value': 'plAIkQj92EdVJnxQEjfeZrPJkcHkCQvQRpSsR-B1a6CFUUPShO7ZusfuFQyV1M7-KBQ1KM1lo1hSeFOAc_1eJA', 'domain': 'epassport.meituan.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2024/8/20 16:19:55'}, {'name': 'eprt', 'value': 'hJGP3NlmNfS_y1lXYE36KG0L2phBJbHM6Rxo7mCu4_RXHRnDl7SP-8A9aWpAHoQp4AzHJ_BnUcr1nAOMMLJOnw', 'domain': 'epassport.meituan.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2024/8/20 16:19:55'}, {'name': 'acctId', 'value': '121667203', 'domain': 'waimaie.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/24 06:43:55'}, {'name': 'token', 'value': '0_lKvsAmU6H_cTKbxV9OsVUpbFM2KKWm4kKh81PJUnUs*', 'domain': 'waimaie.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/24 06:43:55'}, {'name': 'wmPoiId', 'value': '13958006', 'domain': 'waimaie.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/24 06:43:55'}, {'name': 'isOfflineSelfOpen', 'value': '0', 'domain': 'waimaie.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/24 06:43:55'}, {'name': 'city_id', 'value': '420100', 'domain': 'waimaie.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/24 06:43:55'}, {'name': 'isChain', 'value': '0', 'domain': 'waimaie.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/24 06:43:55'}, {'name': 'ignore_set_router_proxy', 'value': 'false', 'domain': 'waimaie.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/24 06:43:55'}, {'name': 'region_id', 'value': '1000420100', 'domain': 'waimaie.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/24 06:43:55'}, {'name': 'region_version', 'value': '1644996624', 'domain': 'waimaie.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/24 06:43:55'}, {'name': 'set_info', 'value': '%7B%22ignoreSetRouterProxy%22%3Afalse%2C%22region_id%22%3A%221000420100%22%2C%22region_version%22%3A1644996624%2C%22wmPoiId%22%3A13958006%7D', 'domain': 'waimaie.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/24 06:43:55'}, {'name': 'bsid', 'value': 'plAIkQj92EdVJnxQEjfeZrPJkcHkCQvQRpSsR-B1a6CFUUPShO7ZusfuFQyV1M7-KBQ1KM1lo1hSeFOAc_1eJA', 'domain': 'waimaie.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/24 06:43:55'}, {'name': 'city_location_id', 'value': '420100', 'domain': 'waimaie.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/24 06:43:55'}, {'name': 'location_id', 'value': '420106', 'domain': 'waimaie.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/24 06:43:55'}, {'name': 'has_not_waimai_poi', 'value': '1', 'domain': 'waimaie.meituan.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/24 06:43:55'}, {'name': 'mms_b84d1838', 'value': '3523,3614,3604,3590,3591,3594,3599,3600,3601,3602,3603,3608,3605,3508,3588,3560,3254,3531,3470,3482,1202,1203,1204,1205,3417,3397', 'domain': 'mms.pinduoduo.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/11/2 11:14:40'}, {'name': 'x-visit-time', 'value': '1721941352541', 'domain': 'mms.pinduoduo.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/11/2 21:02:32'}, {'name': 'cookie2', 'value': '110ba43f0fb2f4f52ffba5cfe02efd6b', 'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': None}, {'name': '_tb_token_', 'value': '351308f87eff7', 'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'XSRF-TOKEN', 'value': 'f645ff74-d921-4844-bae5-f07c77d75871', 'domain': 'login.taobao.com', 'path': '/', 'secure': False, 'httpOnly': True, 'expirationDate': None}, {'name': '_samesite_flag_', 'value': 'true', 'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': None}, {'name': 'xlly_s', 'value': '1', 'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2024/7/31 00:37:00'}, {'name': 'xlly_s', 'value': '1', 'domain': '.tmall.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2024/7/31 00:37:00'}, {'name': 'unb', 'value': '2218267619830', 'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': None}, {'name': 'sn', 'value': '%E5%A5%BD%E9%9C%80%E8%8D%AF%E5%A4%A7%E8%8D%AF%E6%88%BF%E6%97%97%E8%88%B0%E5%BA%97%3A%E6%B1%9F%E7%AF%B1', 'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'cancelledSubSites', 'value': 'empty', 'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'dnk', 'value': '', 'domain': '.tmall.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'unb', 'value': '2218267619830', 'domain': '.tmall.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'lgc', 'value': '', 'domain': '.tmall.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'cookie2', 'value': '110ba43f0fb2f4f52ffba5cfe02efd6b', 'domain': '.tmall.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': None}, {'name': '_nk_', 'value': '', 'domain': '.tmall.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'cancelledSubSites', 'value': 'empty', 'domain': '.tmall.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 't', 'value': '0ca0777189a6488fbdedfa7e32cf30d7', 'domain': '.tmall.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'sn', 'value': '%E5%A5%BD%E9%9C%80%E8%8D%AF%E5%A4%A7%E8%8D%AF%E6%88%BF%E6%97%97%E8%88%B0%E5%BA%97%3A%E6%B1%9F%E7%AF%B1', 'domain': '.tmall.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': '_tb_token_', 'value': '351308f87eff7', 'domain': '.tmall.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'dnk', 'value': '', 'domain': '.tmall.hk', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'unb', 'value': '2218267619830', 'domain': '.tmall.hk', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'lgc', 'value': '', 'domain': '.tmall.hk', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'cookie2', 'value': '110ba43f0fb2f4f52ffba5cfe02efd6b', 'domain': '.tmall.hk', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': None}, {'name': '_nk_', 'value': '', 'domain': '.tmall.hk', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'cancelledSubSites', 'value': 'empty', 'domain': '.tmall.hk', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 't', 'value': '0ca0777189a6488fbdedfa7e32cf30d7', 'domain': '.tmall.hk', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'sn', 'value': '%E5%A5%BD%E9%9C%80%E8%8D%AF%E5%A4%A7%E8%8D%AF%E6%88%BF%E6%97%97%E8%88%B0%E5%BA%97%3A%E6%B1%9F%E7%AF%B1', 'domain': '.tmall.hk', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': '_tb_token_', 'value': '351308f87eff7', 'domain': '.tmall.hk', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'XSRF-TOKEN', 'value': 'd4a70cd5-6321-49a9-a896-b0b4c87c7af0', 'domain': 'sell.publish.tmall.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': None}, {'name': 'tfstk', 'value': 'fQrKnBcHl1f3sSbuAJ_gEBtDyZ6GnkeUCWyXqbcHP5FTFSnoq8ikV4Fa9HVuFbq-25PsPkm3K5H7s7noqDikV4Fa9HVuFuD72Drg-3chT0e7i0Cciij0LJoZVsf0XsOu2mMkNUOkRR91odXKDij0LJ9ndt21mT8AO2hrN0gIPfws_YhWN0NSfRMm1HMWAYO1BYlsN0GSPfTsHvOBP0iGd_h6dbx8y9J6Awx6afi4Xv31SJhs24BoQ2CTpfK5GoDpAjwI63tST1o1LReh9nyiYWFxnWj6vSe73zgT2C1xale_Azww9OiYBP4mJPCB2fqnsqrIjLsQCDlKlkgv3ZeZxbg-Wq9Jv50-9PZIWLt7pclSozFd9elQ-53qCV9R0AVm1JrQWTR_dScKAAgGctesPPqEukf6vma4KD47G1YnOrH54MZ0DYfMijHkROB9zUuIIqmn4HZeVeP-BjXd2U8r7OktiOB9zUuIQAhcp6LyzVWN.', 'domain': '.tmall.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/1/24 00:37:57'}, {'name': 'XSRF-TOKEN', 'value': '99e68199-3b6d-4b72-8092-706f21386aaa', 'domain': 'work.1688.com', 'path': '/', 'secure': False, 'httpOnly': True, 'expirationDate': None}, {'name': 'cookie2', 'value': '110ba43f0fb2f4f52ffba5cfe02efd6b', 'domain': '.1688.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': None}, {'name': 'sgcookie', 'value': 'E100aNjh8B6zkxu3F1XKp8SVs%2BHK4qebnu4D%2Bx1kCYKdCiEWzXnSZK47OqduQiSSE5fWVGSaXUg6hZm0vt5%2FOC%2FF3VBMlurThSgZwJ1CaPfZQpWQUPGVPYH2LZ%2BYz8qhz%2Bt6', 'domain': '.1688.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': None}, {'name': 't', 'value': '0ca0777189a6488fbdedfa7e32cf30d7', 'domain': '.1688.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': '_tb_token_', 'value': '351308f87eff7', 'domain': '.1688.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'csg', 'value': 'e519c78f', 'domain': '.1688.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': None}, {'name': 'lid', 'value': '%E5%A5%BD%E9%9C%80%E8%8D%AF%E5%A4%A7%E8%8D%AF%E6%88%BF%E6%97%97%E8%88%B0%E5%BA%97%3A%E6%B1%9F%E7%AF%B1', 'domain': '.1688.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/7/29 04:07:41'}, {'name': 'sn', 'value': '%E5%A5%BD%E9%9C%80%E8%8D%AF%E5%A4%A7%E8%8D%AF%E6%88%BF%E6%97%97%E8%88%B0%E5%BA%97%3A%E6%B1%9F%E7%AF%B1', 'domain': '.1688.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'unb', 'value': '2218267619830', 'domain': '.1688.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': '__cn_logon__', 'value': 'false', 'domain': '.1688.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/5 04:07:41'}, {'name': 'cna', 'value': 'kgMuH0eGKzsCAduM66yOfxZ5', 'domain': '.1688.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/9/2 04:07:42'}, {'name': 'xlly_s', 'value': '1', 'domain': '.1688.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2024/8/1 04:07:42'}, {'name': 'EGG_SESS', 'value': '9MiIZhHl1LcKYmTwEKvcbxO7iIY_Qo389lCBmWI7h16WXGk57TzSN2-nXzIvr_LvegTPMJz75ebdSmGYoEILfcIyExUoYXk0gJs_yabwAmJ02aeSVuO6MGsl7M5l76rVs80ItpINmpcAdKrbyDevaVSCi-zKvjTAjPf_YtJ8qoexl7j3kl9XT76DLF4Y91gvaCrh1v74p1xmI52jqko3YPIz4r5IYR1SzNH05aUGPuTbJBnoNZGmzDCbhuWswpRW4-igINZCYMQOc66zJo6URv9oPATC2IaDkOhPAFjnJp_Nn63DtbDWLsqkKBmFNJIBOCqFmCr9MyEORfRkt6_HHShzNGICkhBTzkIZJ0sdfJmhCLeCeDVUrdM3zHKW7uoFIa-CIN1Atzo48Hudw0OroN69MRrphu3_5gVjyfGDkjjYyETlPU0HOYik5ln-JQoCQXLBcgZ6r1CJsji7WCWmLXaBFAisR0r19uI7g05f8lqVoxnm8kFb_ghKdbgplBTpDIFivz7430ABZDdav1GjChcTUNv5YNUpNZCmPTKSmDd7KkyQDJPUupWLzX8MaEi6cj3xXZKdxLmPV6XTQoCetzUzeuHGQJw21iDgDW1Z02huCCTZcWxoIv22XDIgnsG2RaCHzYbnn-tT272DX7uKegG008sTIRgz3R2p5FwEu2V5np1nyOWs37wL4XSl7UgThhuQLRDQqnrSfZ9SbUhIjs7FgtNE0JrKl-1Kf5os-yeN2FvOeTGAMKPAzOqEDUXbdATuBpbd8S4s16-nx4Pddz0_k9UVLI3MA-Z9j6IBqnY_6Ec4Se1JhYOljYmyZI1m8Onwor_GD7HTwWKae_rvjdFNqQu5BGDf8XmLSwo2tYChqLyH-RZWgf2JN8Dn771YYnw0CWYNgZQvUg5KIDn9asv_jR6yZofNMaf6zQ4PD6WwxiAlQMdVllZdYHmzeifNbhYPeeJGnz-qmxahrNZqucJHXyyI4XsrmVCNyu8W92wOq738vLkhxc2xHyqyLO74U_5Zbh9tAWo2AGDATTJkk_q4YM67I2Pd11uvQk_Ycq9TchbsPJYbpwBiV_2R0TP7lJL6wI--j88EcOO9YXMXTZOxOdis0AAoN38fT_wWd718u20Xq8ADCXyVq_kKoch_Zfp1m2xf0SRWx4tVFOFSG0TPCuZSyzO8yDQ7x4BbJSIdnCjFjp5M8M_dgTxLpuytCtF1lKQFowp9u-bZvfcI0mJn-b4XXyCJ0dbAjBUYqmT3Y1LQ35PwvdQ-p3wNnZMywEky0U1z5M_GjbonXS5-jymtsTplPVJq1RyvMrifLN5cSNCv5u5RslCxrED42IJY8ZceFAJ-ZlbbAgKBRf4wFJ9Xj3LOGcKZYnzur6McW95JaEgXOuNAhw5HNlBTtmVNDjsdmvLbDxs6gO5o42RgCXR_JwRlsdYqAgt0adkQc1L-hU3LwSrjt7E6xPWzpPgBk3Ds_2kc1LcC28-Bw8KPRryoxvveexReXipEdByjbXy0F1t60GnLsoqKX9WtWGr5q8ea3VeguvgFt4OnVPODAD95ocTYi64mBXxXPVrTu_LUepIWXmjd3b-CRY4HyyFJoYu1dkDUIKh1cq2HfpfOLAj2pZP7yfbqS73Djq7ovoeCseOReL0erhUkgatIizXJabGkPcjS_brEzkWSqfUIO5PTSaGrO0VLcygQO4J9pyGwnUCOB4dgSLVXKmcsOl3b9marSETpJVCXULHZpzytVD1E2WMf3-Bzir5queGMiQVXsqM6-vlTJyBPLZakJd8j7cUZM2r3qs9OYV5b7nSfXEUIJ2HWGtKG9GgvclGsVPfVG4T73yKzIA45Quk2Udw-G0qCQUaE9xS8CmBeH8EUdNflArfPSxeYQHCvX9XcuqopT-h74OaUEW73BWxQkI0xXZ2JEEcK3w11NFuFKfjnPupgPjielUS89rOKyg7TMzFRBFtGY7OOEh4sd5yy-xEfiMXGyOay5H4wGCfoYe1O3MaA5h7UQM4lmrxGTkpnWiSEWKJJJv_vYf43Zj-oLdW7', 'domain': 'insights.1688.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2024/7/30 04:07:43'}, {'name': '_bl_uid', 'value': 'zgld7zwy67eg3kxyym1Csyjy8tLI', 'domain': 'sale.1688.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/1/25 04:07:47'}, {'name': 'H_PS_PSSID', 'value': '60236_60359_60466_60492_60502', 'domain': '.baidu.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/7/29 05:27:25'}, {'name': 'BD_HOME', 'value': '1', 'domain': 'www.baidu.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': None}, {'name': 'keywordsHistory', 'value': '%E6%B7%B1%E5%9C%B3%E5%B8%82%E6%9D%B0%E4%B9%8B%E7%BE%8E%E6%97%B6%E8%A3%85%E6%9C%89%E9%99%90%E5%85%AC%E5%8F%B8%3B%E6%B7%B1%E5%9C%B3%E5%B8%82%E8%94%9A%E8%93%9D%E4%B9%8B%E9%83%BD%E8%B4%B8%E6%98%93%E6%9C%89%E9%99%90%E5%85%AC%E5%8F%B8%3B%E6%B7%B1%E5%9C%B3%E5%B8%82%E8%94%9A%E8%93%9D%E4%B9%8B%E9%83%BD%E8%B4%B8%E6%98%93%3B%E6%A3%AE%E9%A9%AC%E4%BB%A3%E5%B7%A5', 'domain': '.1688.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2024/8/5 06:04:51'}, {'name': 'JSESSIONID', 'value': '19629D9F8FDABF2E8D4B06C8164E2037', 'domain': 'dj.1688.com', 'path': '/', 'secure': False, 'httpOnly': True, 'expirationDate': None}, {'name': 'xlly_s', 'value': '1', 'domain': 'localhost', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2024/8/1 08:24:35'}, {'name': 'JSESSIONID', 'value': 'E6605ABACABEE7DF96F9C1A34980EA83', 'domain': 'spu.taobao.com', 'path': '/', 'secure': False, 'httpOnly': True, 'expirationDate': None}, {'name': 'isg', 'value': 'BMzMmwM-xrhx9NJ8mkhY5mvYnSr-BXCvWYU6uCaMyncasW-7ShduPxlCVbmJ-agH', 'domain': 'localhost', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/1/25 08:24:35'}, {'name': 'tfstk', 'value': 'fCDSZt6PXab5Grnb-7K4Ci7UAuyB749ZwMZKjDILy83ERygEk2zzzyRAMkEhpke8LpEKrqVUyvzEdHaYYW3U80-Cqxg1LT8kZDBQLJLw7dJZq323pFyd0-f1rlr1JpPLwKhrAWjw7dJZ2QEuLmLwxxUqdSZLpuF8vsKbxrERp2U8MZE_jJUKJJKbkkq5yTEReon9wGZBNzmWcoTzPJIvW2zfpOsgc7Lx46WhKOZuaPFYl9FShuN7W0HoiWm7Dxkb_SSeL-nig4EbCL_gVjn_ekMHX6aQOY2blV9OKoc-PxFI3Hvt08Zz6JFAY9obFyN3aSjhU0hYJ5ML3aC8f8a76YF5btm09jMbUYLhsmoby5wqgIYzT8gSsPVJiE0IczuKFSQWuylZ0YFjWEWj-WGKU-HJkdsyTOzsMW1Cc5XQcP-Xc6fUxWvhlLD2CVV8muN2cn_-t7E0cP-Xc6f3woq7bntfyXf..', 'domain': 'localhost', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/1/25 08:24:35'}, {'name': 'tfstk', 'value': 'f7ziw2DV4los50AAIy01cBxcRTId1dgjF-LxHqHVYvkBW1wA1k0EZfJq0OgToJ2unPLxWmQ4K-ymMrF4kjz0dVobXxHtnqVbE6BRyaF_1qgFeTQ-OF2ZcqMVkqoQ2_fSuTBRJ1jBE4g4DJk6kvVEdjYZ_qy2LXltLfJ2b-kEYblJQqu43W5ngfk2_ElqLBlxgcLkuY44RyWMUjBjIjxwmXmiUWjWuEbx_LHz_v82uAcij_FZKE84-k1KidMNVBHjWAZrs-_W5Vo00P3U797qzuw3o0ulD1iaik2jWy52bYrTBmasxKtjZVks4PoH_eMI5An3-PRM77mti0uqxI84t2DIxP3PzpcQY5E45RADufaTymDSxs8jD2z-4uyMG_NE7jyjVrBW5AP4NzZ-rNvSskPo-gJJY3RgMEGFMy-XcclItYsR6mDEQzk6u6fHVGiZOfBRt6xXcclItYCht39jbXGOe', 'domain': '.1688.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/1/25 06:04:11'}, {'name': 'isg', 'value': 'BJqaKBrLqDKTxySewQ2uwoe160C8yx6lu2MsgqQTiS34FzpRjFjQtXdt4-OLx5Y9', 'domain': '.1688.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/1/25 06:04:11'}, {'name': '_m_h5_tk', 'value': 'a3704144d77a5ba48497382f7d4609e0_1722250573024', 'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2024/7/29 10:02:07'}, {'name': '_m_h5_tk_enc', 'value': '01e8aee5194bf1457a5e1cae9d3e11c9', 'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2024/7/29 10:02:07'}, {'name': '3PcFlag', 'value': '1722241951737', 'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2024/8/8 16:32:26'}, {'name': 'umdata_', 'value': 'T2gA7P3JXDqUrTOAqugM1Fl2YLkNqDtmPXnHLlizxCEUvl6od7Bkt-aAfqeLkrv9XVA=', 'domain': '.ynuf.aliapp.org', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/7/29 08:32:27'}, {'name': 'sgcookie', 'value': 'E100Y8hyFCXiDDiOcFZ7gk%2BdS5V0ALZf7u4%2FCHBqZpK%2Fp0%2Fff%2FMbvL9WwPfPh2yLhs29wADmeRusqvXgmO2BLnaKSktnuwDEI4TGdD9K1kmkfm5lJOZ%2BZwPjJGb2XRbECABD', 'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2025/7/29 16:32:29'}, {'name': 'csg', 'value': 'd2788e0e', 'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'skt', 'value': '8ad0f8ef4cc09825', 'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': None}, {'name': '_cc_', 'value': 'Vq8l%2BKCLiw%3D%3D', 'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/7/29 16:32:29'}, {'name': 'uc1', 'value': 'cookie21=U%2BGCWk%2F7og%3D%3D&cookie14=UoYcAfsY8efGPg%3D%3D', 'domain': '.tmall.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'sgcookie', 'value': 'E100Y8hyFCXiDDiOcFZ7gk%2BdS5V0ALZf7u4%2FCHBqZpK%2Fp0%2Fff%2FMbvL9WwPfPh2yLhs29wADmeRusqvXgmO2BLnaKSktnuwDEI4TGdD9K1kmkfm5lJOZ%2BZwPjJGb2XRbECABD', 'domain': '.tmall.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': None}, {'name': 'csg', 'value': 'd2788e0e', 'domain': '.tmall.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'uc1', 'value': 'cookie21=U%2BGCWk%2F7og%3D%3D&cookie14=UoYcAfsY8efGPg%3D%3D', 'domain': '.tmall.hk', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'sgcookie', 'value': 'E100Y8hyFCXiDDiOcFZ7gk%2BdS5V0ALZf7u4%2FCHBqZpK%2Fp0%2Fff%2FMbvL9WwPfPh2yLhs29wADmeRusqvXgmO2BLnaKSktnuwDEI4TGdD9K1kmkfm5lJOZ%2BZwPjJGb2XRbECABD', 'domain': '.tmall.hk', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': None}, {'name': 'csg', 'value': 'd2788e0e', 'domain': '.tmall.hk', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'cna', 'value': 'q7AbH0lL9D8BASQOA2nCRqh0', 'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/9/2 08:32:30'}, {'name': '_mw_us_time_', 'value': '1722241955845', 'domain': 'myseller.taobao.com', 'path': '/', 'secure': True, 'httpOnly': True, 'expirationDate': '2024/7/29 09:32:30'}, {'name': 'isg', 'value': 'BNvb7iaxOcWKVEWCf-LQom1Naj9FsO-ywugNrc0Yt1rxrPuOVYB_AvkvRgwijEeq', 'domain': '.tmall.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/1/25 08:32:26'}, {'name': 'uc1', 'value': 'cookie21=V32FPkk%2Fhw%3D%3D&cookie14=UoYcAfsY8efGMg%3D%3D', 'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': None}, {'name': 'tfstk', 'value': 'fQcoIhZeQYy5DH7pqjVWdZvGcs9YNgNQqDCLvWEe3orfwkU-8yPn0DL722-SxXqqmUwpFbC3LouKeJKBPJkmVVy-x2T78koExkHJHC3SPWNeXWA964Zkjs3oqJyegez_WkJh_PZIPWNeDZCeBC0Sjh1W_pVeoSz3J6PULuS2oPzLT_yFatS4cyPUYDrP0ZzQRzWFaJSqf25UjXljg3jwyn_-yaG4r8qh9o53Bj5Tnluzm6-ZizjQb4rcT6rWc7zto4Kl1qFSqc4t2I5oj2usL-ch0hqIiqlrLqsku50mHAeon353DbEYCbPA8Qu4Nu2ZaRb6IqN8YJ20QwfoDJqo3byc86uuGkytK0xlFuk-mRa43wA_kcEqPbkDRiurXuVzu-dwSqyEHbwswn5u_Ag8wvowDTErIySr7tWNr2CQuehVd9wzlrq6BUe30tQMvE8DoO97UraJXEYcd9wzlrq9oEX1A8zbyhC..', 'domain': '.taobao.com', 'path': '/', 'secure': False, 'httpOnly': False, 'expirationDate': '2025/1/25 08:32:44'}, {'name': 'isg', 'value': 'BNDQji17gvTV0V7DuDigb5kNoR4imbTj_VG2LMqhRSv-BXSvc6lhcup33c3l1Wy7', 'domain': '.taobao.com', 'path': '/', 'secure': True, 'httpOnly': False, 'expirationDate': '2025/1/25 08:32:43'}
+        # ]
+        # # 遍历设置每个Cookie
+        # for x in cookies:
+        #     request.cookies.set(name=x['name'], value=x['value'])
 
         headers = {
+
+            'cookie': 'cq=ccp%3D1; t=0ca0777189a6488fbdedfa7e32cf30d7; _bl_uid=1plXsyjUotz0vvxt3mkbo90jO3z2; thw=cn; cookie2=110ba43f0fb2f4f52ffba5cfe02efd6b; _tb_token_=351308f87eff7; _samesite_flag_=true; xlly_s=1; unb=2218267619830; sn=%E5%A5%BD%E9%9C%80%E8%8D%AF%E5%A4%A7%E8%8D%AF%E6%88%BF%E6%97%97%E8%88%B0%E5%BA%97%3A%E6%B1%9F%E7%AF%B1; cancelledSubSites=empty; JSESSIONID=E6605ABACABEE7DF96F9C1A34980EA83; mtop_partitioned_detect=1; _m_h5_tk=a3704144d77a5ba48497382f7d4609e0_1722250573024; _m_h5_tk_enc=01e8aee5194bf1457a5e1cae9d3e11c9; 3PcFlag=1722241951737; sgcookie=E100Y8hyFCXiDDiOcFZ7gk%2BdS5V0ALZf7u4%2FCHBqZpK%2Fp0%2Fff%2FMbvL9WwPfPh2yLhs29wADmeRusqvXgmO2BLnaKSktnuwDEI4TGdD9K1kmkfm5lJOZ%2BZwPjJGb2XRbECABD; csg=d2788e0e; skt=8ad0f8ef4cc09825; _cc_=Vq8l%2BKCLiw%3D%3D; cna=q7AbH0lL9D8BASQOA2nCRqh0; uc1=cookie21=V32FPkk%2Fhw%3D%3D&cookie14=UoYcAfsY8efGMg%3D%3D; tfstk=fwTKI363cAD3GUikRBiMZHiT0RlijedEWpRbrTX3Vdp9NQZhVTmeegpkQgTh-Bv9yLviTpcFqdIWndYkxgA7w_9GRg-hE9XRyQJxsx0moBRFzNMmnqm4Dn7hu_17A8f_f_SghoknoBRU1WeSihg02-KS1bBWFMs1fsW1NyaBFRs1Q_57d_aI6C6NNaaQRzO1C_f0d_aIXGDRCW6uy3hS3PVzAAa8yFCsUtdLtzCMJ6UGHC6thxTTuMBXOOUSnkWC8TBwlAm9_eKBK1J-kAQX0dLRca3L36K6MN6hlmEOJCvekwTxpyfGS9jXYGhIJC7dpiT5xYmWsa66yUI_OkJAJLIXRGF7lB75LNC6lbqVIFBHFeIsirIl5EjfRhmZKgbdMLTep7UWhCAD8G8-HR6yxs71wUlb2TI5468Dk_DgntCuAfhT4uSCsibhzy6dBqkA6tcKyurPbf5OnfhT4uSC_1Bm9vEz4GlN.; isg=BNTUggnvTiC5_dpf3Az8u6WxpRJGLfgXEX0ykG61ud_iWXCjlz0tpkafWVFBoTBv',
+
             '$csrftoken.headername': '$csrfToken.token',
             'accept': 'application/json, text/plain, */*',
             'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6',
@@ -107,139 +175,95 @@ class QianNiu:
             'x-requested-with': 'XMLHttpRequest',
         }
 
-        params = {
-            'ac': [
-                'table',
-                'pagination',
-            ],
-        }
+        data_source = []
 
-        jsonBody = {
-            "filter": {
-                "status": {"text": "小二确认", "value": 3},
-                "title": f"{brand} {product_name}",
-                "cat0": {"value": 122966004, "text": "处方药"}
-            },
-            "pagination": {"current": 1, "pageSize": 100},
-            "parentTab": "spu-all", "childTab": ""
-        }
-
-        data = {
-            'jsonBody': json.dumps(jsonBody),
-        }
-
-        try:
-            response = request.post(
-                'https://spu.taobao.com/manager/ajax/getModels.htm',
-                params=params,
-                headers=headers,
-                data=data
+        allowed_chars = ['Ⅰ', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ', 'Ⅵ', 'Ⅶ', 'Ⅷ', 'Ⅸ', 'Ⅹ']
+        if '/' not in brand and any(char in brand for char in allowed_chars):
+            brand = ""
+            data_source.extend(requests_util(request, brand, product_name, headers))
+            # 上面拿到的dataSource数据不为空
+            write_resp_json(
+                id, product_id, price,
+                sales,
+                brand, product_name,
+                specifications, company,
+                data_source,
+                conn, resp_json_table_name,
+                excel_table_name
             )
-            # print("Response Text:", response.text)
-            # raise 1
-            resp_json = response.json()
-            # 打印 resp_json 的内容，确保它包含了预期的键和值
-            # print("resp_json:", resp_json)
-
-            # 检查响应中是否包含成功标志
-            if not resp_json['success']:
-                raise ValueError('搜索天猫产品库数据错误')
-            else:
-                # 将 JSON 数据转换为文本
-                resp_text = json.dumps(resp_json)
-                resp_json = convert_unicode_to_text(resp_text)
-                # print(resp_json)
-                # 存到数据库中
-                data_to_insert = [
-                    {
-                        'id': id,
-                        'brand': brand,
-                        'product_name': product_name,
-                        'specifications': specifications,
-                        'company': company,
-                        'resp_json': resp_json,
-                    },
-                ]
-                code = DatabaseManager.batch_write_data(
-                    conn, data_to_insert, resp_json_table_name
-                )
-                if code == 200:
-                    print("写入 resp_json成功")
-                else:
-                    print("写入 resp_json失败")
-
-        except requests.exceptions.RequestException as e:
-            print(f"请求发生异常: {e}")
-        except json.JSONDecodeError as jde:
-            print(f"JSON 解析异常: {jde}")
+        else:
+            brand_list = brand.split('/')
+            for brand in brand_list:
+                if brand not in allowed_chars:
+                    # print(brand)
+                    data_source.extend(requests_util(request, brand, product_name, headers))
+                    # 上面拿到的dataSource数据不为空
+                    write_resp_json(
+                        id, product_id, price,
+                        sales,
+                        brand, product_name,
+                        specifications, company,
+                        data_source,
+                        conn, resp_json_table_name,
+                        excel_table_name
+                    )
 
 
 def resp_json_next(
-        resp_json,
         conn,
         id,
         brand,
         product_name,
+        resp_json,
+        product_id,
+        price,
+        sales,
         specifications,
         company,
         resp_json_table_name,
         url_table_name
 ):
-    """ 根据 resp_json 进行之后的处理 """
+    """ 根据 resp_json 进行之后的处理  dataSource """
     delete_value = 0
     flag = False
-    # 检查 'success' 键是否存在，并且其值为 True
-    if 'success' in resp_json and resp_json['success']:
-        # 安全获取 dataSource
-        dataSource = resp_json.get('data', {}).get('table', {}).get('dataSource', [])
-        # print("dataSource:", dataSource)  # 打印 dataSource 的值，用于调试
-        # print(len(dataSource))
-        # 如果 dataSource 判断是否有有效数据
-        if isinstance(dataSource, list) and len(dataSource) == 0:
-            delete_value = 7
-            flag = True
-            # print("未找到有效的 dataSource 数据")
-        elif isinstance(dataSource, dict) and len(dataSource) == 0:
-            delete_value = 7
-            flag = True
-            # print("未找到有效的 dataSource 数据")
-        elif dataSource is not None:
-            # print("成功获取到 dataSource:", dataSource)
-            spec_url_dict = {}
-            spuId = None
-            for data in dataSource:
-                status = data.get('status', {})
-                if status == '小二确认':
-                    target_text = '发布商品'
-                    for item in data.get('operation', []):
-                        if item.get('text') == target_text:
-                            url = item.get('url')
-                            keyProps = data.get('keyProps', {})
-                            # print(keyProps)
-                            old_specifications = None
-                            for key in keyProps:
-                                if '规格' in key:
-                                    colon_index = key.find(':')  # 找到 ':' 的索引位置
-                                    if colon_index != -1:  # 如果找到了 ':'
-                                        old_specifications = key[colon_index + 1:]  # 获取 ':' 后面的内容
-                                        # print(old_specifications)
-                            spuId = data.get('spuId', {})
-                            # 字典存储
-                            spec_url_dict[old_specifications] = url
-                else:
-                    print("status 屏蔽'")
-            if spec_url_dict:  # 检查字典是否为空
-                # print("字典是存在")
-                old_specifications_key_set = set(spec_url_dict.keys())
-                print(specifications)
-                bool = False
-                old_specifications_temp = None
-                for old_specifications in old_specifications_key_set:
-                    print(old_specifications)
+    # 如果 dataSource 判断是否有有效数据 安全获取 dataSource
 
+    if resp_json is not None:
+        # print("成功获取到 dataSource:", resp_json)
+        spec_url_dict = {}
+        spuId = None
+        for data in resp_json:
+            for op in data['operation']:
+                if op['text'] == '发布商品':
+                    for item in data['keyProps']:
+                        if item.startswith('药品规格:'):
+                            http_url = op['url']
+                            # print(url)
+                            spuId = data['spuId']
+                            # print(spuId)
+                            http_specifications = item.split('药品规格:')[1]
+                            # print(http_specifications)
+                            # 字典存储
+                            spec_url_dict[http_specifications] = http_url
+                            break
+        # 检查字典是否为空
+        if spec_url_dict and len(spec_url_dict) > 0:
+            # print("字典是存在")
+            http_specifications_set = set(spec_url_dict.keys())
+            print(specifications)
+            bool = False
+            http_specifications_temp = None
+            for http_specifications in http_specifications_set:
+                print(http_specifications)
+                # print(type(http_specifications))
+                if http_specifications is None:
+                    print("http_specifications 为 None")
+                    delete_value = 8
+                    flag = True
+                else:
                     # AI 处理
                     content = (
-                            " 旧的规格为 " + old_specifications +
+                            " 旧的规格为 " + http_specifications +
                             ",  新的规格为 " + specifications +
                             ", 如果药品的净重量相同 ？"
                             " 如果相同返回YES"
@@ -250,18 +274,18 @@ def resp_json_next(
                     timer = threading.Timer(10, lambda: None)  # 设置 10 秒的定时器
                     timer.start()
                     try:
-                        msg = get_ai_response(content)
+                        msg = AiUtils.get_ai_response(content)
                         print(msg)
                         if "YES" in msg:
-                            old_specifications_temp = old_specifications
+                            http_specifications_temp = http_specifications
                             bool = True
                             break
-                        elif old_specifications in specifications:
-                            old_specifications_temp = old_specifications
+                        elif http_specifications in specifications:
+                            http_specifications_temp = http_specifications
                             bool = True
                             break
-                        elif specifications in old_specifications:
-                            old_specifications_temp = old_specifications
+                        elif specifications in http_specifications:
+                            http_specifications_temp = http_specifications
                             bool = True
                             break
                     except TimeoutError:
@@ -271,59 +295,58 @@ def resp_json_next(
                     finally:
                         timer.cancel()  # 取消定时器
 
-                if bool:
-                    try:
-                        url = spec_url_dict[old_specifications_temp]
-                        data_to_insert = [
-                            {
-                                'id': id,
-                                'spuId': spuId,
-                                'url': url,
-                                'product_name': product_name,
-                                'brand': brand,
-                                'specifications': old_specifications_temp,
-                                'company': company,
-                            },
-                        ]
-                        # 写数据
-                        code = DatabaseManager.batch_write_data(
-                            conn, data_to_insert, url_table_name
-                        )
-                        # print(code)
-                        # 成功 就删除 excel_data  为 1  否则 插入url_table_name数据异常 为 3
-                        if code == 200:
-                            # print(" 写入url_table_name成功 ")
-                            delete_value = 1
-                            flag = True
-                        else:
-                            # print("  插入url_table_name数据异常 ")
-                            delete_value = 3
-                            flag = True
-                    except KeyError as e:
-                        # print(f"捕获到异常: 键 '{specifications}' 不存在于字典中。异常信息: {e}")
-                        delete_value = 4
+            if bool:
+                try:
+                    url = spec_url_dict[http_specifications_temp]
+                    data_to_insert = [
+                        {
+                            'id': id,
+                            'spuId': spuId,
+                            'url': url,
+                            'product_name': product_name,
+                            'brand': brand,
+                            'product_id': product_id,
+                            'price': price,
+                            'sales': sales,
+                            'specifications': http_specifications_temp,
+                            'company': company,
+                        },
+                    ]
+                    # 写数据
+                    code = DatabaseManager.batch_write_data(
+                        conn, data_to_insert, url_table_name
+                    )
+                    # print(code)
+                    # 成功 就删除 excel_data  为 1  否则 插入url_table_name数据异常 为 3
+                    if code == 200:
+                        # print(" 写入url_table_name成功 ")
+                        delete_value = 1
                         flag = True
-                else:
-                    # print(" 规格不符 ")
-                    delete_value = 5
+                    else:
+                        # print("  插入url_table_name数据异常 ")
+                        delete_value = 3
+                        flag = True
+                except KeyError as e:
+                    # print(f"捕获到异常: 键 '{specifications}' 不存在于字典中。异常信息: {e}")
+                    delete_value = 4
                     flag = True
             else:
-                # print("字典为空")
-                delete_value = 6
+                # print(" 规格不符 ")
+                delete_value = 5
                 flag = True
         else:
-            # print("未找到有效的 dataSource 数据")
-            delete_value = 7
+            # print("字典为空")
+            delete_value = 6
             flag = True
-        if flag:
-            # 捕获到异常 删除为 4
-            # 为 5 规格不符，为 6 字典为空，为 7 未找到有效的 dataSource 数据
-            code = DatabaseManager.update_is_delete_by_id(
-                conn,
-                resp_json_table_name,
-                id,
-                delete_value
-            )
-
     else:
-        print("请求未成功或没有有效数据")
+        # print("未找到有效的 dataSource 数据")
+        delete_value = 7
+        flag = True
+    if flag:
+        # 捕获到异常 删除为 4  为 5 规格不符，为 6 字典为空，为 7 未找到有效的 dataSource 数据
+        code = DatabaseManager.update_is_delete_by_id(
+            conn,
+            resp_json_table_name,
+            id,
+            delete_value
+        )
