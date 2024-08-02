@@ -184,9 +184,9 @@ if __name__ == '__main__':
     """读取excel文件中某一页的某一列 ，分解，写入 excel_data"""
     # read_excelFile_insert_excel_data(excelDAO, file_excel_path, excel_sheet_name, excel_column_name)
     """读excel_data的内容，发请求，将请求内容存起来resp_json_data"""
-    find_excel_data_insert_resp_json_data(excelDAO, resp_jsonDAO)
+    # find_excel_data_insert_resp_json_data(excelDAO, resp_jsonDAO)
     """读resp_json_data调用qianniu_util里面的方法，处理，写入url_data"""
-    # find_resp_json_data_insert_url_data(resp_jsonDAO,urlDAO)
+    find_resp_json_data_insert_url_data(resp_jsonDAO,urlDAO)
 
     # 关闭数据库连接
     DatabaseUtils.close_connection(connection)
