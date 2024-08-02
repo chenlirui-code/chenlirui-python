@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 
 class FileUtils:
     @staticmethod
-    def get_all_fileName(file_path):
+    def get_all_filename(file_path):
         """ 给一个地址 返回 当前目录的所有文件夹 和文件 """
         folders = []
         files = []

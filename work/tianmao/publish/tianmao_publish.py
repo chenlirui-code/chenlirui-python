@@ -1,9 +1,8 @@
 import sys
 import json
-
 from util.database_util import DatabaseUtils
 from util.mybatisplus_util import MyBatisPlusUtils
-from work.tianmao.publish.util.database_manager_util import DatabaseManager
+from util.logging_util import logger
 from work.tianmao.publish.util.product_util import read_xlsx_excel, split_product, split_pve_brand, \
     split_pve_product_name, split_next
 from work.tianmao.publish.util.qianniu_util import QianNiu, resp_json_next
@@ -74,7 +73,7 @@ def find_excel_data_insert_resp_json_data(excelDAO, resp_jsonDAO):
     # 读 没有 删除的内容 is_delete = 0 的 表内容
     # 根据 产品名称 product_name 和 brand  搜索 qianniu
     # 根据 specifications 匹配规格
-    excel_data_list = excelDAO.find_by_conditions(
+    excel_data_list = excelDAO.find_by_equals(
         {'is_delete': 0},
         {
             'product_name': None,
@@ -92,27 +91,31 @@ def find_excel_data_insert_resp_json_data(excelDAO, resp_jsonDAO):
         sales = data[7]
         specifications = data[8]
         company = data[9]
-        print(data)
+        # print(data)
         # 内容 找网址 匹配 ，写入 excelDAO  resp_jsonDAO
-        # QianNiu.search_product_by_brand_and_name(
-        #     id,
-        #     product,
-        #     product_id,
-        #     price,
-        #     product_name,
-        #     brand,
-        #     sales,
-        #     specifications,
-        #     company,
-        #     excelDAO,
-        #     resp_jsonDAO
-        # )
+        QianNiu.search_product_by_brand_and_name(
+            id,
+            product,
+            product_id,
+            price,
+            product_name,
+            brand,
+            sales,
+            specifications,
+            company,
+            excelDAO,
+            resp_jsonDAO
+        )
 
 
-def find_resp_json_data_insert_url_data(conn, resp_json_table_name, url_table_name):
+def find_resp_json_data_insert_url_data(resp_jsonDAO, urlDAO):
     """读resp_json_data调用qianniu_util里面的方法，处理，写入url_data"""
     # 读 没有 删除的内容 is_delete = 0 的 表内容
-    resp_json_data_list = DatabaseManager.query_data(conn, resp_json_table_name)
+    resp_json_data_list = resp_jsonDAO.find_by_equals(
+        {'is_delete': 0},
+        None
+    )
+    # resp_json_data_list = DatabaseManager.query_data(conn, resp_json_table_name)
     for data in resp_json_data_list:
         id = data[0]
         brand = data[2]
@@ -124,17 +127,8 @@ def find_resp_json_data_insert_url_data(conn, resp_json_table_name, url_table_na
         sales = data[7]
         specifications = data[8]
         company = data[9]
-        # print(id)
-        # print(brand)
-        # print(product_name)
-        # print(resp_json)
-        # print(product_id)
-        # print(price)
-        # print(specifications)
-        # print(company)
-        # break
+        # print(data)
         resp_json_next(
-            conn,
             id,
             brand,
             product_name,
@@ -144,8 +138,8 @@ def find_resp_json_data_insert_url_data(conn, resp_json_table_name, url_table_na
             sales,
             specifications,
             company,
-            resp_json_table_name,
-            url_table_name
+            resp_jsonDAO,
+            urlDAO
         )
 
 
@@ -192,7 +186,7 @@ if __name__ == '__main__':
     """读excel_data的内容，发请求，将请求内容存起来resp_json_data"""
     find_excel_data_insert_resp_json_data(excelDAO, resp_jsonDAO)
     """读resp_json_data调用qianniu_util里面的方法，处理，写入url_data"""
-    # find_resp_json_data_insert_url_data(conn, resp_json_table_name, url_table_name)
+    # find_resp_json_data_insert_url_data(resp_jsonDAO,urlDAO)
 
     # 关闭数据库连接
     DatabaseUtils.close_connection(connection)

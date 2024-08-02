@@ -9,18 +9,10 @@
 import os
 import time
 import requests
-import logging
-import cv2
-import pytesseract
-import cv2
-import paddlehub as hub
 
-from PIL import Image
 from paddleocr import PaddleOCR
 from rembg import remove
-from manga_ocr import MangaOcr
-
-logging.basicConfig(level=logging.INFO)
+from util.logging_util import logger
 
 
 class ImgUtils:
@@ -40,13 +32,13 @@ class ImgUtils:
                 os.makedirs(os.path.dirname(new_save_path), exist_ok=True)
                 with open(new_save_path, 'wb') as f:
                     f.write(response.content)
-                logging.info(f"成功下载图片到：{new_save_path}")
+                logger.info(f"成功下载图片到：{new_save_path}")
                 return True
             else:
-                logging.error(f"下载图片失败：HTTP 状态码 {response.status_code}")
+                logger.error(f"下载图片失败：HTTP 状态码 {response.status_code}")
                 return False
         except Exception as e:
-            logging.error(f"下载图片时发生异常：{str(e)}")
+            logger.error(f"下载图片时发生异常：{str(e)}")
             return False
 
     @staticmethod
@@ -61,10 +53,10 @@ class ImgUtils:
                     file_path = os.path.join(root, file)
                     if file_path.endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp')):
                         os.remove(file_path)
-            logging.info(f"图片删除成功，文件夹：{folder_path}")
+            logger.info(f"图片删除成功，文件夹：{folder_path}")
             return True
         except Exception as e:
-            logging.error(f"删除图片时发生异常：{str(e)}")
+            logger.error(f"删除图片时发生异常：{str(e)}")
             return False
 
     @staticmethod
@@ -80,13 +72,13 @@ class ImgUtils:
                 output_data = remove(input_data)
             with open(output_path, 'wb') as o:
                 o.write(output_data)
-            logging.info(f"图片处理成功，已保存到 {output_path}")
+            logger.info(f"图片处理成功，已保存到 {output_path}")
             return True
         except FileNotFoundError:
-            logging.error(f"错误：找不到文件 {input_path}")
+            logger.error(f"错误：找不到文件 {input_path}")
             return False
         except Exception as e:
-            logging.error(f"处理图片时发生错误：{str(e)}")
+            logger.error(f"处理图片时发生错误：{str(e)}")
             return False
 
     @staticmethod

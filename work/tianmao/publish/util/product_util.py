@@ -10,10 +10,6 @@
 """
 import openpyxl
 
-from openpyxl import load_workbook
-
-from work.tianmao.publish.util.database_manager_util import DatabaseManager
-
 
 def read_xlsx_excel(url, sheet_name, column_name_arr):
     '''
