@@ -12,7 +12,7 @@ if __name__ == '__main__':
 
     s = input()
 
-    data = TextUtils.convert_unicode_to_text(s)
+    data = TextUtils.decode_unicode_to_text(s)
 
     print(data)
     pass

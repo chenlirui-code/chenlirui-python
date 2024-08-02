@@ -1,8 +1,8 @@
 import sys
 import json
-from util.database_util import DatabaseUtils
-from util.mybatisplus_util import MyBatisPlusUtils
-from util.logging_util import logger
+from utils.database_util import DatabaseUtils
+from utils.mybatisplus_util import MyBatisPlusUtils
+from utils.logging_util import logger
 from work.tianmao.publish.util.product_util import read_xlsx_excel, split_product, split_pve_brand, \
     split_pve_product_name, split_next
 from work.tianmao.publish.util.qianniu_util import QianNiu, resp_json_next

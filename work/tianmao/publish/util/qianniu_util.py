@@ -51,7 +51,7 @@ def requests_util(request, brand, product_name, headers):
         raise ValueError('搜索天猫产品库数据错误')
     else:
         # logger.info(resp_json)
-        temp_data_source = TextUtils.convert_unicode_to_text(process_data_source(resp_json))
+        temp_data_source = TextUtils.decode_unicode_to_text(process_data_source(resp_json))
         # logger.info(temp_data_source)
         # raise 1
         return temp_data_source
