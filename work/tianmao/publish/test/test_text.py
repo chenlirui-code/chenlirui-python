@@ -6,7 +6,7 @@
 @Time    : 2024/8/2 上午10:06
 @explain : 文件说明
 """
-from util.text_util import TextUtils
+from utils.text_util import TextUtils
 
 if __name__ == '__main__':
 

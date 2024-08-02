@@ -7,7 +7,7 @@
 """
 import time
 
-from util.viztracer_util import analyze_function
+from utils.viztracer_util import analyze_function
 
 
 def profiler_this():

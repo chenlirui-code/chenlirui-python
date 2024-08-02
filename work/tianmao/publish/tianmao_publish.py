@@ -7,7 +7,7 @@ from work.tianmao.publish.util.product_util import read_xlsx_excel, split_produc
     split_pve_product_name, split_next
 from work.tianmao.publish.util.qianniu_util import QianNiu, resp_json_next
 
-sys.path.append('D:\\work\\python')  # 将 util 文件夹的父目录添加到搜索路径中
+sys.path.append('D:\\work\\python')  # 将 utils 文件夹的父目录添加到搜索路径中
 
 
 def read_excelFile_insert_excel_data(excelDAO, file_excel_path, excel_sheet_name, excel_column_name):

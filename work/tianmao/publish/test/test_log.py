@@ -7,7 +7,7 @@
 @explain : 文件说明
 """
 
-from util.logging_util import logger
+from utils.logging_util import logger
 
 
 try:

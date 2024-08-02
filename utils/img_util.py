@@ -12,7 +12,7 @@ import requests
 
 from paddleocr import PaddleOCR
 from rembg import remove
-from util.logging_util import logger
+from utils.logging_util import logger
 
 
 class ImgUtils:

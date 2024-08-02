@@ -8,9 +8,9 @@
 """
 import pymysql
 
-from util.database_util import DatabaseUtils
+from utils.database_util import DatabaseUtils
 from typing import List
-from util.logging_util import logger
+from utils.logging_util import logger
 
 
 class MyBatisPlusUtils:

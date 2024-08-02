@@ -12,9 +12,9 @@ import json
 import requests
 import threading
 
-from util.ai_util import AiUtils
-from util.text_util import TextUtils
-from util.logging_util import logger
+from utils.ai_util import AiUtils
+from utils.text_util import TextUtils
+from utils.logging_util import logger
 
 
 def requests_util(request, brand, product_name, headers):
