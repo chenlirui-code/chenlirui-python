@@ -12,9 +12,9 @@ import json
 import requests
 import threading
 
-from utils.ai_util import AiUtils
-from utils.text_util import TextUtils
-from utils.logging_util import logger
+from utils.ai.ai_util import AiUtils
+from utils.text.TextUtils import TextUtils
+from utils.log.my_logger import logger
 
 
 def requests_util(request, brand, product_name, headers):
@@ -51,7 +51,7 @@ def requests_util(request, brand, product_name, headers):
         raise ValueError('搜索天猫产品库数据错误')
     else:
         # logger.info(resp_json)
-        temp_data_source = TextUtils.decode_unicode_to_text(process_data_source(resp_json))
+        temp_data_source = TextUtils.decode(process_data_source(resp_json))
         # logger.info(temp_data_source)
         # raise 1
         return temp_data_source

@@ -1,0 +1,2 @@
+INFO:my_logger: info test.py 信息
+INFO:my_logger: info test_logging 信息

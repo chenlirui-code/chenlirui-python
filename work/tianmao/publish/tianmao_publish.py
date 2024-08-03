@@ -1,13 +1,19 @@
 import sys
 import json
-from utils.database_util import DatabaseUtils
-from utils.mybatisplus_util import MyBatisPlusUtils
-from utils.logging_util import logger
+from utils.database.DatabaseUtils import DatabaseUtils
+from utils.mybatis.MyBatisPlusUtils import MyBatisPlusUtils
 from work.tianmao.publish.util.product_util import read_xlsx_excel, split_product, split_pve_brand, \
     split_pve_product_name, split_next
 from work.tianmao.publish.util.qianniu_util import QianNiu, resp_json_next
 
 sys.path.append('D:\\work\\python')  # 将 utils 文件夹的父目录添加到搜索路径中
+
+
+def get_float_or_zero(s):
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
 
 
 def read_excelFile_insert_excel_data(excelDAO, file_excel_path, excel_sheet_name, excel_column_name):
@@ -24,8 +30,8 @@ def read_excelFile_insert_excel_data(excelDAO, file_excel_path, excel_sheet_name
         product = excel['商品名称']
         sales = excel['求和项:近30日销量']
         price = excel['price']
-        # 排除 price 为 0
-        if price != 0:
+        # 排除 price 不为不可转的字符串  price > 0
+        if get_float_or_zero(price) > 0:
             product = product.strip().replace(' ', '')
             # pve  前面的两个属性  next 后面的两个属性
             pve, next = split_product(product)
@@ -144,8 +150,8 @@ def find_resp_json_data_insert_url_data(resp_jsonDAO, urlDAO):
 
 
 if __name__ == '__main__':
-    # 连接数据库
-    host = '192.168.110.17'
+    # 连接数据库     192.168.43.250
+    host = '192.168.43.250'
     user = 'temp'
     password = '123456'
     database = 'bk_tm_db'
@@ -186,7 +192,7 @@ if __name__ == '__main__':
     """读excel_data的内容，发请求，将请求内容存起来resp_json_data"""
     # find_excel_data_insert_resp_json_data(excelDAO, resp_jsonDAO)
     """读resp_json_data调用qianniu_util里面的方法，处理，写入url_data"""
-    find_resp_json_data_insert_url_data(resp_jsonDAO,urlDAO)
+    find_resp_json_data_insert_url_data(resp_jsonDAO, urlDAO)
 
     # 关闭数据库连接
     DatabaseUtils.close_connection(connection)

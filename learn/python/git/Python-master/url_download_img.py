@@ -2,7 +2,7 @@ import requests
 import time
 
 from bs4 import BeautifulSoup
-from utils.img_util import ImgUtils
+from utils.img.img_util import ImgUtils
 
 if __name__ == "__main__":
     local = time.strftime("%Y.%m.%d")

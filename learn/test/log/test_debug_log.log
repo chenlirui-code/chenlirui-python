@@ -1,0 +1,5 @@
+INFO:my_logger: info test.py 信息
+DEBUG:my_logger: debug test.py 信息
+DEBUG:my_logger: debug test_logging 信息
+INFO:my_logger: info test_logging 信息
+DEBUG:my_logger: debug test.py 后信息
