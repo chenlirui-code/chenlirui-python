@@ -1,3 +1,11 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+@File    : my_logger.py
+@Author  : ChenLiRui
+@Time    : 2024/8/1 下午2:11
+@explain : 日志记录器
+"""
 import logging
 import os
 import sys
