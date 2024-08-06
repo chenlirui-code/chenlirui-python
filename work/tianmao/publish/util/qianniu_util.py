@@ -11,8 +11,7 @@
 import json
 import requests
 import threading
-
-from utils.ai.ai_util import AiUtils
+from utils.ai.AiCore import AiCore
 from utils.text.TextUtils import TextUtils
 from utils.log.my_logger import logger
 
@@ -51,7 +50,7 @@ def requests_util(request, brand, product_name, headers):
         raise ValueError('搜索天猫产品库数据错误')
     else:
         # logger.info(resp_json)
-        temp_data_source = TextUtils.decode(process_data_source(resp_json))
+        temp_data_source = TextUtils.decode(process_data_source(resp_json), 'unicode')
         # logger.info(temp_data_source)
         # raise 1
         return temp_data_source
@@ -121,7 +120,6 @@ class QianNiu:
     @staticmethod
     def search_product_by_brand_and_name(
             id,
-            product,
             product_id,
             price,
             product_name,
@@ -262,7 +260,7 @@ def resp_json_next(
                     timer = threading.Timer(10, lambda: None)  # 设置 10 秒的定时器
                     timer.start()
                     try:
-                        msg = AiUtils.get_ai_response(content)
+                        msg = AiCore.get_ai_response(content)
                         logger.info(msg)
                         if "YES" in msg:
                             http_specifications_temp = http_specifications

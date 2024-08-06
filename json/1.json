@@ -1,26 +1,26 @@
 [
   {
-    "spuId":"1575858754",
+    "spuId":"858269239",
     "keyProps":[
-      "品牌:AstraZeneca/阿斯利康",
-      "药品名称:信必可都保 布地奈德福莫特罗吸入粉雾剂",
-      "药品规格:80μg:4.5μg*60吸*1支/盒"
+      "品牌:泽普思",
+      "药品名称:氟比洛芬凝胶贴膏",
+      "药品规格:13.6cm*10cm*6贴/盒"
     ],
     "operation":[
       {
         "text":"编辑产品",
         "uiType":"link",
-        "url":"//spu.taobao.com/product/spuDetail.htm?providerId=0&spuId=1575858754"
+        "url":"//spu.taobao.com/product/spuDetail.htm?providerId=0&spuId=858269239"
       },
       {
         "text":"批量纠错",
         "uiType":"link",
-        "url":"//spu.taobao.com/correction/spuBatchCorrection.htm?providerId=0&spuId=1575858754"
+        "url":"//spu.taobao.com/correction/spuBatchCorrection.htm?providerId=0&spuId=858269239"
       },
       {
         "text":"发布商品",
         "uiType":"link",
-        "url":"https://sell.publish.tmall.com/tmall/spuBasedPublish.htm?catId=123326005&spuId=1575858754&id=null"
+        "url":"https://sell.publish.tmall.com/tmall/spuBasedPublish.htm?catId=123358002&spuId=858269239&id=null"
       }
     ]
   }

@@ -2,21 +2,27 @@ import sys
 import json
 from utils.database.DatabaseUtils import DatabaseUtils
 from utils.mybatis.MyBatisPlusUtils import MyBatisPlusUtils
+from utils.text.TextUtils import TextUtils
+from utils.ai.Spark import Spark
 from work.tianmao.publish.util.product_util import read_xlsx_excel, split_product, split_pve_brand, \
     split_pve_product_name, split_next
 from work.tianmao.publish.util.qianniu_util import QianNiu, resp_json_next
-
+from utils.log.my_logger import logger
+logger.configure_logging('DEBUG')
 sys.path.append('D:\\work\\python')  # 将 utils 文件夹的父目录添加到搜索路径中
 
 
 def get_float_or_zero(s):
+    """
+    获取 float 值，如果无法转换成 float 类型，返回 0.0
+    """
     try:
         return float(s)
     except ValueError:
         return 0.0
 
 
-def read_excelFile_insert_excel_data(excelDAO, file_excel_path, excel_sheet_name, excel_column_name):
+def read_excel_file_insert_excel_data(excelDAO, file_excel_path, excel_sheet_name, excel_column_name):
     """读取excel文件中某一页的某一列 ，分解，写入 excel_data"""
     excel_text = read_xlsx_excel(file_excel_path, excel_sheet_name, excel_column_name)
     excel_text.pop(0)
@@ -101,7 +107,6 @@ def find_excel_data_insert_resp_json_data(excelDAO, resp_jsonDAO):
         # 内容 找网址 匹配 ，写入 excelDAO  resp_jsonDAO
         QianNiu.search_product_by_brand_and_name(
             id,
-            product,
             product_id,
             price,
             product_name,
@@ -149,11 +154,80 @@ def find_resp_json_data_insert_url_data(resp_jsonDAO, urlDAO):
         )
 
 
+def find_resp_json_data_insert_url_data_is_delete(resp_jsonDAO, urlDAO):
+    """读resp_json_data调用qianniu_util里面的方法，处理，写入url_data"""
+    # 读 没有 删除的内容 is_delete = 0 的 表内容
+    resp_json_data_list = resp_jsonDAO.find_by_equals(
+        {'is_delete': 5},
+        None
+    )
+    # resp_json_data_list = DatabaseManager.query_data(conn, resp_json_table_name)
+    for data in resp_json_data_list:
+        id = data[0]
+        brand = data[2]
+        product_name = data[3]
+        resp_json = data[4]
+        resp_json = json.loads(resp_json)
+        product_id = data[5]
+        price = data[6]
+        sales = data[7]
+        specifications = data[8]
+        company = data[9]
+        # print(data)
+        logger.debug("=========================================================================")
+        flag = False
+        spuId = ''
+        url = ''
+        http_specifications_temp = ''
+        logger.debug(" 新的规格 " + specifications)
+        for item in resp_json:
+            # logger.debug(item)
+            # item = TextUtils.decode(item, 'gbk')
+
+            http_specifications = item['keyProps'][2].split('药品规格:')[1]
+            logger.info(" 市场的规格 " + http_specifications)
+            # AI 处理
+            content = (
+                    " 旧的规格为 " + http_specifications +
+                    ",  新的规格为 " + specifications +
+                    ", 如果药品的规格大致相同 ？"
+                    " 如果相同返回YES"
+                    ", 不相同返回NO"
+                    ", 只返回YES和NO,不需要解释"
+                    ",必须返回一个结果"
+            )
+            logger.info(content)
+            msg = Spark.Spark_lite(content)
+            logger.info(msg)
+            spuId = item['spuId']
+            # logger.info(spuId)
+            url = item['operation'][2]['url']
+            # break
+        # break
+        if flag:
+            data_to_insert = {
+                'id': id,
+                'spuId': spuId,
+                'url': url,
+                'product_name': product_name,
+                'brand': brand,
+                'product_id': product_id,
+                'price': price,
+                'sales': sales,
+                'specifications': http_specifications_temp,
+                'company': company,
+            }
+            # 写数据
+            code = urlDAO.insert(
+                data_to_insert
+            )
+
+
 if __name__ == '__main__':
     # 连接数据库     192.168.43.250
-    host = '192.168.43.250'
-    user = 'temp'
-    password = '123456'
+    host = 'localhost'
+    user = 'root'
+    password = '1202'
     database = 'bk_tm_db'
     # 创建数据库连接
     connection = DatabaseUtils.create_connection(
@@ -192,7 +266,9 @@ if __name__ == '__main__':
     """读excel_data的内容，发请求，将请求内容存起来resp_json_data"""
     # find_excel_data_insert_resp_json_data(excelDAO, resp_jsonDAO)
     """读resp_json_data调用qianniu_util里面的方法，处理，写入url_data"""
-    find_resp_json_data_insert_url_data(resp_jsonDAO, urlDAO)
+    # find_resp_json_data_insert_url_data(resp_jsonDAO, urlDAO)
+    """读resp_json_data调用qianniu_util里面的方法，处理，写入url_data"""
+    # find_resp_json_data_insert_url_data_is_delete(resp_jsonDAO, urlDAO)
 
     # 关闭数据库连接
     DatabaseUtils.close_connection(connection)

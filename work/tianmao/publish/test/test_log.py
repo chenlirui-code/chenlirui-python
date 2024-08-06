@@ -9,8 +9,33 @@
 
 from utils.log.my_logger import logger
 
-
 try:
+    s = [{
+        "spuId": "858269239",
+        "keyProps": [
+            "品牌:泽普思",
+            "药品名称:氟比洛芬凝胶贴膏",
+            "药品规格:13.6cm*10cm*6贴/盒"
+        ],
+        "operation": [
+            {
+                "text": "编辑产品",
+                "uiType": "link",
+                "url": "//spu.taobao.com/product/spuDetail.htm?providerId=0&spuId=858269239"
+            },
+            {
+                "text": "批量纠错",
+                "uiType": "link",
+                "url": "//spu.taobao.com/correction/spuBatchCorrection.htm?providerId=0&spuId=858269239"
+            },
+            {
+                "text": "发布商品",
+                "uiType": "link",
+                "url": "https://sell.publish.tmall.com/tmall/spuBasedPublish.htm?catId=123358002&spuId=858269239&id=null"
+            }
+        ]
+    }]
+    print(s)
     # 这里模拟一个可能出错的操作
     result = 1 / 0
 except Exception as e:
