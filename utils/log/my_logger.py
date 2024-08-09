@@ -1,11 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-"""
-@File    : my_logger.py
-@Author  : ChenLiRui
-@Time    : 2024/8/1 下午2:11
-@explain : 日志记录器
-"""
 import logging
 import os
 import sys
@@ -78,9 +70,10 @@ class MyLogger:
             file_handler.setFormatter(formatter)
             self.logger.addHandler(file_handler)
 
-        # 创建一个流处理器
+        # 创建一个流处理器并指定编码为 'utf-8'
         stream_handler = logging.StreamHandler(stream=sys.stdout)
         stream_handler.setFormatter(formatter)
+        stream_handler.encoding = 'utf-8'  # 指定编码为 'utf-8'
         self.logger.addHandler(stream_handler)
 
         self._configured = True
